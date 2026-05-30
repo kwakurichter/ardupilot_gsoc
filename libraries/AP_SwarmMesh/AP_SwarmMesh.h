@@ -1,0 +1,133 @@
+/*
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+#pragma once
+
+#include "AP_SwarmMesh_config.h"
+
+#if AP_SWARMMESH_ENABLED
+#include <AP_Common/AP_Common.h>
+#include <AP_Param/AP_Param.h>
+#include <AP_Math/AP_Math.h>
+
+class AP_SwarmMesh_Backend;
+
+class AP_SwarmMesh
+{
+public:
+    friend class AP_SwarmMesh_Backend;
+
+    AP_SwarmMesh();
+
+    /* Do not allow copies */
+    CLASS_NO_COPY(AP_SwarmMesh);
+
+    // get singleton instance
+    static AP_SwarmMesh *get_singleton() { return _singleton; }
+
+    // external hardware backend types (used by _TYPE parameter)
+    enum class Type : uint8_t {
+        None    = 0,
+        Serial  = 1,
+#if AP_SWARMMESH_SITL_ENABLED
+        SITL    = 10
+#endif
+    };
+
+    // The AP_SwarmMesh structure is filled in by the backend driver
+    struct PeerState {
+        // Peer identity
+        uint8_t  sysid;         // unique ID of original peer
+        uint8_t  vehicle_type;  // 0: copter, 1: plane, 2: sub, 3: blimp, 4: rover
+        uint8_t  prev_id;       // ID of peer which forwarded message
+        // Liveness / Link quality
+        uint32_t last_heard_ms; // system time of last update from this peer for staleness detection
+        uint16_t last_seq;      // for dedup ring buffer
+        uint8_t  rssi;          // signal strength
+        uint16_t rx_count;      // received message count
+        uint16_t drop_count;    // dropped message count
+        bool     freshness;     // true: FRESH, false: STALE
+        // Kinematic state
+        Vector3f local_pos_NED; // offset from origin [x, y, z] in meters
+        Vector3f global_pos;    // GPS [lat (degE7), lon (degE7). alt (mm)]
+        float    pos_covariance[9];
+        Vector3f attitude;      // [pitch, roll, yaw] in rads
+        float    att_covariance[9];
+        // Vehicle state
+        uint8_t  mode;
+        bool     armed_state;   // true: armed, false: disarmed
+        bool     landed_state;  // true: landed, false: not landed
+        uint8_t  failsafe_flags;
+        uint8_t  battery_voltage;
+        uint8_t  health_flags;
+        // Coordination state
+        uint8_t  role;
+        uint8_t  task_id;
+        uint8_t  formation_slot;
+        Vector3f target_pos;    // [lat (degE7), lon (degE7). alt (mm)]
+        uint8_t  priority;
+    };
+
+    // initialise
+    void init(void);
+
+    // return true if mesh feature is enabled
+    bool enabled(void) const;
+
+    // return true if mesh is basically healthy (we are receiving data)
+    bool healthy(void) const;
+
+    // update state of all peers
+    void update(void);
+
+    // return number of known peers
+    uint8_t count() const;
+
+    // return data for a specific peer by index
+    bool get_peer_data(uint8_t peer_id, struct PeerState& state) const;
+
+    static const struct AP_Param::GroupInfo var_info[];
+
+    // a method for vehicles to call to make onboard log messages:
+    void log();
+
+private:
+
+    // return true if driver is instantiated and type is not None
+    bool device_ready(void) const;
+
+    static AP_SwarmMesh *_singleton;
+
+    // parameters
+    AP_Enum<Type> _type;
+    AP_Int8  stream;
+    AP_Int16 lite_mask;
+    AP_Int32 full_mask;
+    AP_Int8  swarm_size;
+    AP_Int8  destination_id;
+    AP_Int8  sysid;
+
+    // external references
+    AP_SwarmMesh_Backend *_driver;
+
+    // individual peer data
+    uint8_t num_peers = 0;
+    PeerState peer_state[AP_SWARMMESH_MAX_PEERS];
+};
+
+namespace AP {
+    AP_SwarmMesh *swarmmesh();
+};
+
+#endif  // AP_SWARMMESH_ENABLED
