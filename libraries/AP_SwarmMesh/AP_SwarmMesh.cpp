@@ -37,7 +37,7 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @Param: _TYPE
     // @DisplayName: Communication backend
     // @Description: Which communication backend are you using
-    // @Values: 0:None,1:MAVLink,10:SITL
+    // @Values: 0:None,1:Serial,10:SITL
     // @User: Advanced
     AP_GROUPINFO_FLAGS("_TYPE",    0, AP_SwarmMesh, _type, 0, AP_PARAM_FLAG_ENABLE),
 
@@ -70,7 +70,7 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @DisplayName: Swarm size
     // @Description: Size of swarm (peers + GCS)
     // @Increment: 1
-    // @Range: 0 255
+    // @Range: 0 16
     // @User: Advanced
     AP_GROUPINFO("_SWARM_SIZE", 4, AP_SwarmMesh, swarm_size, 0),
 
@@ -78,7 +78,7 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @DisplayName: Destination ID
     // @Description: SysID of intended destination for transmitted messages
     // @Increment: 1
-    // @Range: 0 255
+    // @Range: 0 16
     // @User: Advanced
     AP_GROUPINFO("_DESTID", 5, AP_SwarmMesh, destination_id, 0),
 
@@ -86,9 +86,17 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @DisplayName: System ID
     // @Description: Unique system ID of this drone
     // @Increment: 1
-    // @Range: 0 255
+    // @Range: 0 16
     // @User: Advanced
     AP_GROUPINFO("_SYSID", 6, AP_SwarmMesh, sysid, 0),
+
+    // @Param: _TTL
+    // @DisplayName: Time-to-Live
+    // @Description: Number of hops a forwarded packet can take before being discarded
+    // @Increment: 1
+    // @Range: 0 255
+    // @User: Advanced
+    AP_GROUPINFO("_TTL", 7, AP_SwarmMesh, ttl, 255),
 
     AP_GROUPEND
 };

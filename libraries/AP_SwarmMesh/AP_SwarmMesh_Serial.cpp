@@ -129,15 +129,56 @@ bool AP_SwarmMesh_Serial::parse_byte(uint8_t b)
     return false;
 }
 
-// called when a complete MAVLink-type packet arrives — TODO: parse MAVLink frame
-// and write decoded fields into _frontend.peer_state[]
+// called when a complete MAVLink-type packet arrives — routes, forwards, or
+// delivers to the local MAVLink parser depending on dest_id and TTL.
 void AP_SwarmMesh_Serial::process_mavlink()
 {
     _last_rx_ms = AP_HAL::millis();
-    // TODO: hand _msgbuf payload to a MAVLink parser and update peer state
+
+    const p2p_header_t *hdr = (const p2p_header_t *)_msgbuf;
+
+    if (hdr->version != SWARMMESH_VERSION_01) {
+        return;
+    }
+    if (hdr->type != SWARMMESH_TYPE_MAVLINK) {
+        return;
+    }
+
+    // freshness check: only if sender had GPS-synchronised time
+    if (!(hdr->flags & SWARMMESH_NO_RTC)) {
+        uint64_t utc_usec = 0;
+#if AP_RTC_ENABLED
+        AP::rtc().get_utc_usec(utc_usec);
+        const uint64_t utc_ms = utc_usec / 1000ULL;
+        // guard subtraction against underflow before comparing
+        if (utc_ms > hdr->origin_time_ms && (utc_ms - hdr->origin_time_ms) > hdr->deadline_ms) {
+            // stale, past freshness budget. Increment counter
+            _stale++;
+            return;
+        }
+#endif
+    }
+
+    if (hdr->ttl == 0) {
+        // TTL expired, drop + increment counter
+        _ttl++;
+        return;
+    }
+
+    if (hdr->dest_id != frontend_sysid()) {
+        // not addressed to us, forward with TTL decremented
+        forward_mavlink(hdr->origin_id, hdr->dest_id,
+                        &_msgbuf[SWARMMESH_HEADER_SIZE],
+                        hdr->deadline_ms, hdr->ttl,
+                        hdr->payload_len, hdr->flags,
+                        hdr->origin_time_ms, hdr->seq);
+        return;
+    }
+
+    // TODO: hand &_msgbuf[SWARMMESH_HEADER_SIZE] to a MAVLink parser and update peer state
 }
 
-void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t payload_len)
+void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len)
 {
     if (uart == nullptr) {
         return;
@@ -151,6 +192,7 @@ void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, 
     hdr.origin_id      = frontend_sysid();   // use accessor — friendship not inherited
     hdr.dest_id        = dest_id;
     hdr.prev_id        = frontend_sysid();
+    hdr.ttl            = ttl;
     hdr.seq            = _tx_seq++;
     hdr.deadline_ms    = deadline_ms;
     hdr.payload_len    = payload_len;
@@ -164,6 +206,44 @@ void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, 
     hdr.flags          = SWARMMESH_NO_RTC;
 #endif
     hdr.origin_time_ms = utc_usec / 1000ULL;
+
+    // compute header CRC over all bytes except the crc field itself, then set it
+    uint8_t crc = 0;
+    const uint8_t *hdr_bytes = (const uint8_t *)&hdr;
+    for (uint8_t i = 0; i < SWARMMESH_HEADER_SIZE - 1; i++) {
+        crc += hdr_bytes[i];
+    }
+    hdr.crc = crc;
+
+    // write complete header then payload
+    for (uint8_t i = 0; i < SWARMMESH_HEADER_SIZE; i++) {
+        uart->write(hdr_bytes[i]);
+    }
+    for (uint8_t i = 0; i < payload_len; i++) {
+        uart->write(payload[i]);
+    }
+}
+
+void AP_SwarmMesh_Serial::forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq)
+{
+    if (uart == nullptr) {
+        return;
+    }
+
+    p2p_header_t hdr {};
+    hdr.stx1           = SWARMMESH_SYNC1;
+    hdr.stx2           = SWARMMESH_SYNC2;
+    hdr.version        = SWARMMESH_VERSION_01;
+    hdr.type           = SWARMMESH_TYPE_MAVLINK;
+    hdr.flags          = flags;
+    hdr.origin_id      = id;
+    hdr.dest_id        = dest_id;
+    hdr.prev_id        = frontend_sysid();
+    hdr.ttl            = (ttl - 1);
+    hdr.seq            = seq;
+    hdr.deadline_ms    = deadline_ms;
+    hdr.payload_len    = payload_len;
+    hdr.origin_time_ms = origin_time;
 
     // compute header CRC over all bytes except the crc field itself, then set it
     uint8_t crc = 0;

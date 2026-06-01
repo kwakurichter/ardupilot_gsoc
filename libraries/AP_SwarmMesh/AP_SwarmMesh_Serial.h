@@ -56,6 +56,8 @@ private:
     uint32_t _last_rx_ms;                       // last time we receive data from peer
     uint16_t _tx_seq;                           // sequence number of sent packets
     uint16_t _crc_fail;                         // CRC mismatch counter
+    uint16_t _stale;                            // stale packet counter
+    uint16_t _ttl;                              // ttl packet counter
     uint8_t  _type;                             // packet type (0 == MAVLink)
     
     // process one incoming byte; returns true when a complete, valid packet has been assembled in _msgbuf
@@ -65,8 +67,11 @@ private:
     void process_mavlink();
 
     // TX path
-    // serialize header + payload into a framed packet and write to UART
-    void send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t payload_len);    
+    // Generated MAVLink. Serialize header + payload into a framed packet and write to UART
+    void send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len);  
+    
+    // Forwarded MAVLink. Serialize header + payload into a framed packet and write to UART
+    void forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq);
 
 };
 

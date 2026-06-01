@@ -117,6 +117,7 @@ private:
     AP_Int8  swarm_size;
     AP_Int8  destination_id;
     AP_Int8  sysid;
+    AP_Int8  ttl;
 
     // external references
     AP_SwarmMesh_Backend *_driver;
