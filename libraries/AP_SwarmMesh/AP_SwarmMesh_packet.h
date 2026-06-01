@@ -25,13 +25,12 @@ typedef struct {
     uint8_t  version;        // Protocol version, currently 1
     uint8_t  type;           // 0 = MAVLink payload, others reserved
     uint8_t  flags;          // Special behaviour (ex. no GPS lock so no synchronization so no freshness detection)
-    uint8_t  id;             // System ID
     uint8_t  origin_id;      // Origin node which created packet
     uint8_t  dest_id;        // Destination ID (targeted delivery)
     uint8_t  prev_id;        // Most recent forwarding node
     uint8_t  ttl;            // Time-to-live
     uint16_t seq;            // Packet sequence from origin
-    uint64_t origin_time_ms; // Timestamp when packet was created (unix)
+    uint64_t origin_time_us; // Timestamp when packet was created (unix)
     uint16_t deadline_ms;    // Relative freshness budget
     uint8_t  payload_len;    // Length of MAVLink frame (Max = 255)
     uint8_t  crc;            // CRC over all bytes above (stx through payload_len)
@@ -39,6 +38,6 @@ typedef struct {
 } p2p_header_t;
 #pragma pack(pop)
 
-static_assert(sizeof(p2p_header_t) == 24, "p2p header must be exactly 24 bytes");
+static_assert(sizeof(p2p_header_t) == 23, "p2p header must be exactly 23 bytes");
 
 #endif   // AP_SWARMMESH_ENABLED

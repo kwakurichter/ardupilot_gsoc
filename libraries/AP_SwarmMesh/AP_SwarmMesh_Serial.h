@@ -58,6 +58,8 @@ private:
     uint16_t _crc_fail;                         // CRC mismatch counter
     uint16_t _stale;                            // stale packet counter
     uint16_t _ttl;                              // ttl packet counter
+    uint16_t _dedup;                            // duplicate packet counter
+    uint16_t _dropped;                          // dropped packet counter
     uint8_t  _type;                             // packet type (0 == MAVLink)
     
     // process one incoming byte; returns true when a complete, valid packet has been assembled in _msgbuf

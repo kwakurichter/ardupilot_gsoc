@@ -52,8 +52,9 @@ public:
         uint8_t  vehicle_type;  // 0: copter, 1: plane, 2: sub, 3: blimp, 4: rover
         uint8_t  prev_id;       // ID of peer which forwarded message
         // Liveness / Link quality
-        uint32_t last_heard_ms; // system time of last update from this peer for staleness detection
+        uint64_t last_heard;    // system time of last update from this peer for staleness detection (unix)
         uint16_t last_seq;      // for dedup ring buffer
+        uint32_t seq_seen_mask; // bitmask of the 32 seq numbers behind last_seq
         uint8_t  rssi;          // signal strength
         uint16_t rx_count;      // received message count
         uint16_t drop_count;    // dropped message count
@@ -106,6 +107,10 @@ private:
 
     // return true if driver is instantiated and type is not None
     bool device_ready(void) const;
+
+    // find an existing peer entry by sysid, or allocate a new one.
+    // returns nullptr if the table is full and the peer is not already present.
+    PeerState *find_or_alloc_peer(uint8_t peer_sysid);
 
     static AP_SwarmMesh *_singleton;
 

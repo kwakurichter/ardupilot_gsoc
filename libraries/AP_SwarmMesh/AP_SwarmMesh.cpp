@@ -186,6 +186,24 @@ bool AP_SwarmMesh::device_ready(void) const
     return ((_driver != nullptr) && (_type != Type::None));
 }
 
+// find an existing peer entry by sysid, or allocate a new zeroed entry.
+// returns nullptr if the table is full and the peer is not already present.
+AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
+{
+    for (uint8_t i = 0; i < num_peers; i++) {
+        if (peer_state[i].sysid == peer_sysid) {
+            return &peer_state[i];
+        }
+    }
+    if (num_peers >= AP_SWARMMESH_MAX_PEERS) {
+        return nullptr;
+    }
+    PeerState &ps = peer_state[num_peers++];
+    memset(&ps, 0, sizeof(ps));
+    ps.sysid = peer_sysid;
+    return &ps;
+}
+
 #if HAL_LOGGING_ENABLED
 // Write incoming peer data
 void AP_SwarmMesh::log()

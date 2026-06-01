@@ -138,10 +138,55 @@ void AP_SwarmMesh_Serial::process_mavlink()
     const p2p_header_t *hdr = (const p2p_header_t *)_msgbuf;
 
     if (hdr->version != SWARMMESH_VERSION_01) {
+        _dropped++;
         return;
     }
     if (hdr->type != SWARMMESH_TYPE_MAVLINK) {
+        _dropped++;
         return;
+    }
+
+    // Duplicate check (find or allocate a peer table entry for this origin)
+    AP_SwarmMesh::PeerState *ps = frontend_peerstate(hdr->origin_id);
+    if (ps == nullptr) {
+        // peer table full — drop
+        _dropped++;
+        return;
+    }
+
+    if (ps->seq_seen_mask == 0) {
+        // first packet ever from this peer: always accept, initialise window
+        ps->seq_seen_mask = 1;
+        ps->last_seq = hdr->seq;
+    } else {
+        //   positive delta -> packet is newer than last_seq
+        //   negative delta -> packet is older (may be a late/re-flooded copy)
+        const int16_t delta = (int16_t)(hdr->seq - ps->last_seq);
+        if (delta == 0) {
+            // exact duplicate
+            _dedup++;
+            return;
+        } else if (delta > 0 && delta < 32) {
+            // new packet within window — advance window, mark current seq
+            ps->seq_seen_mask = (ps->seq_seen_mask << (uint8_t)delta) | 1U;
+            ps->last_seq = hdr->seq;
+        } else if (delta >= 32) {
+            // large jump forward (e.g. after a gap) — reset window
+            ps->seq_seen_mask = 1U;
+            ps->last_seq = hdr->seq;
+        } else if (delta > -32) {
+            // old packet, within the trailing window — check if already seen
+            const uint32_t bit = 1U << (uint8_t)(-delta);
+            if (ps->seq_seen_mask & bit) {
+                _dedup++;
+                return;
+            }
+            ps->seq_seen_mask |= bit;
+        } else {
+            // too old, outside window (drop)
+            _dropped++;
+            return;
+        }
     }
 
     // freshness check: only if sender had GPS-synchronised time
@@ -149,10 +194,10 @@ void AP_SwarmMesh_Serial::process_mavlink()
         uint64_t utc_usec = 0;
 #if AP_RTC_ENABLED
         AP::rtc().get_utc_usec(utc_usec);
-        const uint64_t utc_ms = utc_usec / 1000ULL;
+        const uint64_t deadline_us = (uint64_t)hdr->deadline_ms * 1000ULL;
         // guard subtraction against underflow before comparing
-        if (utc_ms > hdr->origin_time_ms && (utc_ms - hdr->origin_time_ms) > hdr->deadline_ms) {
-            // stale, past freshness budget. Increment counter
+        if (utc_usec > hdr->origin_time_us && (utc_usec - hdr->origin_time_us) > deadline_us) {
+            // stale, past freshness budget
             _stale++;
             return;
         }
@@ -160,18 +205,18 @@ void AP_SwarmMesh_Serial::process_mavlink()
     }
 
     if (hdr->ttl == 0) {
-        // TTL expired, drop + increment counter
+        // TTL expired (drop)
         _ttl++;
         return;
     }
 
     if (hdr->dest_id != frontend_sysid()) {
-        // not addressed to us, forward with TTL decremented
+        // not addressed to us — forward with TTL decremented
         forward_mavlink(hdr->origin_id, hdr->dest_id,
                         &_msgbuf[SWARMMESH_HEADER_SIZE],
                         hdr->deadline_ms, hdr->ttl,
                         hdr->payload_len, hdr->flags,
-                        hdr->origin_time_ms, hdr->seq);
+                        hdr->origin_time_us, hdr->seq);
         return;
     }
 
@@ -205,7 +250,7 @@ void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, 
 #else    
     hdr.flags          = SWARMMESH_NO_RTC;
 #endif
-    hdr.origin_time_ms = utc_usec / 1000ULL;
+    hdr.origin_time_us = utc_usec / 1000ULL;
 
     // compute header CRC over all bytes except the crc field itself, then set it
     uint8_t crc = 0;
@@ -243,7 +288,7 @@ void AP_SwarmMesh_Serial::forward_mavlink(uint8_t id, uint8_t dest_id, const uin
     hdr.seq            = seq;
     hdr.deadline_ms    = deadline_ms;
     hdr.payload_len    = payload_len;
-    hdr.origin_time_ms = origin_time;
+    hdr.origin_time_us = origin_time;
 
     // compute header CRC over all bytes except the crc field itself, then set it
     uint8_t crc = 0;

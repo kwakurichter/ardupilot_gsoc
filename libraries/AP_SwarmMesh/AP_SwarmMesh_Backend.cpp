@@ -43,4 +43,10 @@ uint8_t AP_SwarmMesh_Backend::frontend_sysid() const
     return (uint8_t)_frontend.sysid;
 }
 
+// find or alloc a peer entry in the frontend table by sysid
+AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peerstate(uint8_t peer_sysid)
+{
+    return _frontend.find_or_alloc_peer(peer_sysid);
+}
+
 #endif  // AP_SWARMMESH_ENABLED
