@@ -19,6 +19,10 @@
 
 #include "AP_SwarmMesh_Backend.h"
 
+#if AP_SWARMMESH_SERIAL_ENABLED
+#include "AP_SwarmMesh_Serial.h"
+#endif
+
 #if AP_SWARMMESH_SITL_ENABLED
 #include "AP_SwarmMesh_SITL.h"
 #endif
@@ -111,7 +115,9 @@ void AP_SwarmMesh::init(void)
     // create backend
     switch ((Type)_type) {
     case Type::Serial:
-        // TODO: instantiate AP_SwarmMesh_Serial once implemented
+#if AP_SWARMMESH_SERIAL_ENABLED
+        _driver = NEW_NOTHROW AP_SwarmMesh_Serial(*this);
+#endif
         break;
 #if AP_SWARMMESH_SITL_ENABLED
     case Type::SITL:

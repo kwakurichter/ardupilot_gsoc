@@ -37,4 +37,10 @@ AP_SwarmMesh_Backend::AP_SwarmMesh_Backend(AP_SwarmMesh &frontend) :
     uart->begin(serialmanager.find_baudrate(AP_SerialManager::SerialProtocol_SwarmMesh, 0));
 }
 
+// sysid accessor
+uint8_t AP_SwarmMesh_Backend::frontend_sysid() const
+{
+    return (uint8_t)_frontend.sysid;
+}
+
 #endif  // AP_SWARMMESH_ENABLED

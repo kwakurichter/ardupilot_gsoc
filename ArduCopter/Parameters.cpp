@@ -1169,6 +1169,12 @@ const AP_Param::GroupInfo ParametersG2::var_info2[] = {
     // @Increment: 0.1
     AP_GROUPINFO("PILOT_TKO_ALT_M", 20, ParametersG2, pilot_takeoff_alt_m, PILOT_TKO_ALT_M_DEFAULT),
 
+#if AP_SWARMMESH_ENABLED
+    // @Group: P2P
+    // @Path: ../libraries/AP_SwarmMesh/AP_SwarmMesh.cpp
+    AP_SUBGROUPINFO(swarmmesh, "P2P", 21, ParametersG2, AP_SwarmMesh),
+#endif
+
     // ID 62 is reserved for the AP_SUBGROUPEXTENSION
 
     AP_GROUPEND

@@ -39,6 +39,9 @@ protected:
     AP_SwarmMesh &_frontend;
 
     AP_HAL::UARTDriver *uart;
+
+    // accessor for the sysid param
+    uint8_t frontend_sysid() const;
 };
 
 #endif  // AP_SWARMMESH_ENABLED
