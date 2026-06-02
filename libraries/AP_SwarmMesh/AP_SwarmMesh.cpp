@@ -190,12 +190,15 @@ bool AP_SwarmMesh::device_ready(void) const
 // returns nullptr if the table is full and the peer is not already present.
 AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
 {
+    // respect swarm_size if set, otherwise fall back to compile-time max
+    const uint8_t limit = (swarm_size > 0) ? MIN((uint8_t)swarm_size, (uint8_t)AP_SWARMMESH_MAX_PEERS) : AP_SWARMMESH_MAX_PEERS;
+
     for (uint8_t i = 0; i < num_peers; i++) {
         if (peer_state[i].sysid == peer_sysid) {
             return &peer_state[i];
         }
     }
-    if (num_peers >= AP_SWARMMESH_MAX_PEERS) {
+    if (num_peers >= limit) {
         return nullptr;
     }
     PeerState &ps = peer_state[num_peers++];

@@ -32,6 +32,7 @@ struct PACKED log_SwarmMesh {
     uint16_t drop;
     uint16_t txseq;
     uint16_t txfwd;
+    uint16_t txdrop;
 };
 
 // @LoggerMessage: SMHB
@@ -101,7 +102,7 @@ struct PACKED log_SwarmMesh_LP {
 #if AP_SWARMMESH_ENABLED
 #define LOG_STRUCTURE_FROM_SWARMMESH \
     { LOG_SWARMMESH_MSG, sizeof(log_SwarmMesh), \
-        "SMST", "QHHHHHHH",  "TimeUS,CRCFail,Stale,TTL,Dedup,Drop,TXseq,TXfwd", "s-------", "F-------", true },  \
+        "SMST", "QHHHHHHHH",  "TimeUS,CRCFail,Stale,TTL,Dedup,Drop,TXseq,TXfwd,TXdrop", "s--------", "F--------", true },  \
     { LOG_SWARMMESH_HB_MSG, sizeof(log_SwarmMesh_HB), \
         "SMHB", "QBBBB",  "TimeUS,SysID,VType,Mode,Arm", "s----", "F----", true },  \
     { LOG_SWARMMESH_SS_MSG, sizeof(log_SwarmMesh_SS), \

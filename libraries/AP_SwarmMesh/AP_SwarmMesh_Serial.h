@@ -57,6 +57,7 @@ private:
     uint32_t _last_rx_ms;                       // last time we receive data from peer
     uint16_t _tx_seq;                           // sequence number of sent original packets
     uint16_t _tx_fwd;                           // sequence number of forwarded packets
+    uint16_t _tx_dropped;                       // TX path dropped counter
     uint16_t _crc_fail;                         // CRC mismatch counter
     uint16_t _stale;                            // stale packet counter
     uint16_t _ttl;                              // ttl packet counter

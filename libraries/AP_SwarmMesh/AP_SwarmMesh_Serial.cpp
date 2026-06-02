@@ -57,6 +57,8 @@ void AP_SwarmMesh_Serial::update(void)
             process_packet();
         }
     }
+
+    // TODO: Implement TX outbound path
 }
 
 // process one byte received on serial port. Message is stored in _msgbuf.
@@ -210,6 +212,10 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
     }
 
     // TODO: Add more cases (ATTITUDE, EXTENDED_SYS_STATE, ...)
+
+    default:
+        _dropped++;
+        break;
     }
 }
 
@@ -320,6 +326,12 @@ void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, 
         return;
     }
 
+    // guard: full packet must fit in the TX ring buffer
+    if (uart->txspace() < SWARMMESH_HEADER_SIZE + payload_len) {
+        _tx_dropped++;
+        return;
+    }    
+
     p2p_header_t hdr {};
     hdr.stx1           = SWARMMESH_SYNC1;
     hdr.stx2           = SWARMMESH_SYNC2;
@@ -352,17 +364,19 @@ void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, 
     hdr.crc = crc;
 
     // write complete header then payload
-    for (uint8_t i = 0; i < SWARMMESH_HEADER_SIZE; i++) {
-        uart->write(hdr_bytes[i]);
-    }
-    for (uint8_t i = 0; i < payload_len; i++) {
-        uart->write(payload[i]);
-    }
+    uart->write((const uint8_t *)&hdr, SWARMMESH_HEADER_SIZE);
+    uart->write(payload, payload_len);    
 }
 
 void AP_SwarmMesh_Serial::forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq)
 {
     if (uart == nullptr) {
+        return;
+    }
+
+    // guard: full packet must fit in the TX ring buffer
+    if (uart->txspace() < SWARMMESH_HEADER_SIZE + payload_len) {
+        _dropped++;
         return;
     }
 
@@ -390,12 +404,8 @@ void AP_SwarmMesh_Serial::forward_mavlink(uint8_t id, uint8_t dest_id, const uin
     hdr.crc = crc;
 
     // write complete header then payload
-    for (uint8_t i = 0; i < SWARMMESH_HEADER_SIZE; i++) {
-        uart->write(hdr_bytes[i]);
-    }
-    for (uint8_t i = 0; i < payload_len; i++) {
-        uart->write(payload[i]);
-    }
+    uart->write((const uint8_t *)&hdr, SWARMMESH_HEADER_SIZE);
+    uart->write(payload, payload_len);      
 
     _tx_fwd++;
 }
@@ -413,7 +423,8 @@ void AP_SwarmMesh_Serial::log_stats()
        dedup           : _dedup,
        drop            : _dropped,
        txseq           : _tx_seq,
-       txfwd           : _tx_fwd
+       txfwd           : _tx_fwd,
+       txdrop          : _tx_dropped
     };
     AP::logger().WriteBlock(&pkt_swarmmesh, sizeof(pkt_swarmmesh));
 }
