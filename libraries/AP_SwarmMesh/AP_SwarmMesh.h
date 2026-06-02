@@ -70,7 +70,7 @@ public:
         bool     armed_state;   // true: armed, false: disarmed
         bool     landed_state;  // true: landed, false: not landed
         uint8_t  failsafe_flags;
-        uint8_t  battery_voltage;
+        uint16_t battery_voltage;
         uint8_t  health_flags;
         // Coordination state
         uint8_t  role;

@@ -33,6 +33,9 @@ public:
     // update
     virtual void update() = 0;
 
+    // write backend performance counters to the onboard log (no-op by default)
+    virtual void log_stats() {}
+
 protected:
 
     // references

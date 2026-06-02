@@ -20,6 +20,7 @@
 #include "AP_SwarmMesh_packet.h"
 #include <AP_HAL/AP_HAL.h>
 #include <AP_RTC/AP_RTC.h>
+#include <AP_Logger/AP_Logger.h>
 
 
 #define SWARMMESH_SYNC1                     0xAD    // SYNC1
@@ -53,9 +54,7 @@ void AP_SwarmMesh_Serial::update(void)
     while (nbytes-- > 0) {
         const int16_t b = uart->read();
         if (b >= 0 && parse_byte((uint8_t)b)) {
-            if (_type == SWARMMESH_TYPE_MAVLINK) {
-                process_mavlink();
-            }
+            process_packet();
         }
     }
 }
@@ -129,19 +128,100 @@ bool AP_SwarmMesh_Serial::parse_byte(uint8_t b)
     return false;
 }
 
-// called when a complete MAVLink-type packet arrives — routes, forwards, or
-// delivers to the local MAVLink parser depending on dest_id and TTL.
-void AP_SwarmMesh_Serial::process_mavlink()
+// decode a fully-parsed MAVLink message, update peer state, and emit log entries
+void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps)
+{
+    switch (msg.msgid) {
+
+    case MAVLINK_MSG_ID_HEARTBEAT: {
+        mavlink_heartbeat_t hb;
+        mavlink_msg_heartbeat_decode(&msg, &hb);
+        ps.vehicle_type = hb.type;
+        ps.armed_state = (hb.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
+        ps.mode = (uint8_t)hb.custom_mode;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_HB pkt_swarmmesh_hb{
+        LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_HB_MSG),
+        time_us         : AP_HAL::micros64(),
+        sysid           : ps.sysid,
+        vehicle_type    : ps.vehicle_type,
+        mode            : ps.mode,
+        armed_state     : (uint8_t)ps.armed_state
+        };
+        AP::logger().WriteBlock(&pkt_swarmmesh_hb, sizeof(pkt_swarmmesh_hb));
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_SYS_STATUS: {
+        mavlink_sys_status_t ss;
+        mavlink_msg_sys_status_decode(&msg, &ss);
+        ps.battery_voltage = ss.voltage_battery;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_SS pkt_ss{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_SS_MSG),
+            time_us     : AP_HAL::micros64(),
+            sysid       : ps.sysid,
+            bat_voltage : ps.battery_voltage
+        };
+        AP::logger().WriteBlock(&pkt_ss, sizeof(pkt_ss));
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
+        mavlink_global_position_int_t gp;
+        mavlink_msg_global_position_int_decode(&msg, &gp);
+        ps.global_pos.x = (float)gp.lat;   // degE7
+        ps.global_pos.y = (float)gp.lon;   // degE7
+        ps.global_pos.z = (float)gp.alt;   // mm above MSL
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_GP pkt_gp{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_GP_MSG),
+            time_us : AP_HAL::micros64(),
+            sysid   : ps.sysid,
+            lat     : gp.lat,
+            lon     : gp.lon,
+            alt     : gp.alt
+        };
+        AP::logger().WriteBlock(&pkt_gp, sizeof(pkt_gp));
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_LOCAL_POSITION_NED: {
+        mavlink_local_position_ned_t lp;
+        mavlink_msg_local_position_ned_decode(&msg, &lp);
+        ps.local_pos_NED.x = lp.x;
+        ps.local_pos_NED.y = lp.y;
+        ps.local_pos_NED.z = lp.z;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_LP pkt_lp{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_LP_MSG),
+            time_us : AP_HAL::micros64(),
+            sysid   : ps.sysid,
+            x       : lp.x,
+            y       : lp.y,
+            z       : lp.z
+        };
+        AP::logger().WriteBlock(&pkt_lp, sizeof(pkt_lp));
+#endif
+        break;
+    }
+
+    // TODO: Add more cases (ATTITUDE, EXTENDED_SYS_STATE, ...)
+    }
+}
+
+// called when a complete packet arrives — routes, forwards, or
+// delivers to the local parser depending on type, dest_id and TTL.
+void AP_SwarmMesh_Serial::process_packet()
 {
     _last_rx_ms = AP_HAL::millis();
 
     const p2p_header_t *hdr = (const p2p_header_t *)_msgbuf;
 
     if (hdr->version != SWARMMESH_VERSION_01) {
-        _dropped++;
-        return;
-    }
-    if (hdr->type != SWARMMESH_TYPE_MAVLINK) {
         _dropped++;
         return;
     }
@@ -220,7 +300,18 @@ void AP_SwarmMesh_Serial::process_mavlink()
         return;
     }
 
-    // TODO: hand &_msgbuf[SWARMMESH_HEADER_SIZE] to a MAVLink parser and update peer state
+    if (hdr->type == SWARMMESH_TYPE_MAVLINK) {
+        // feed the raw MAVLink frame bytes through the parser
+        mavlink_message_t msg;
+        const uint8_t *payload = &_msgbuf[SWARMMESH_HEADER_SIZE];
+        for (uint8_t i = 0; i < hdr->payload_len; i++) {
+            if (mavlink_frame_char_buffer(&_mavlink_rxmsg, &_mavlink_rx_status, payload[i], &msg, &_mavlink_rx_status)) {
+                handle_mavlink(msg, *ps);
+            }
+        }
+    } else {
+        _dropped++;
+    }
 }
 
 void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len)
@@ -250,7 +341,7 @@ void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, 
 #else    
     hdr.flags          = SWARMMESH_NO_RTC;
 #endif
-    hdr.origin_time_us = utc_usec / 1000ULL;
+    hdr.origin_time_us = utc_usec;
 
     // compute header CRC over all bytes except the crc field itself, then set it
     uint8_t crc = 0;
@@ -305,6 +396,27 @@ void AP_SwarmMesh_Serial::forward_mavlink(uint8_t id, uint8_t dest_id, const uin
     for (uint8_t i = 0; i < payload_len; i++) {
         uart->write(payload[i]);
     }
+
+    _tx_fwd++;
 }
+
+#if HAL_LOGGING_ENABLED
+// Write connection stats
+void AP_SwarmMesh_Serial::log_stats()
+{
+    const struct log_SwarmMesh pkt_swarmmesh{
+       LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_MSG),
+       time_us         : AP_HAL::micros64(),
+       crc_fail        : _crc_fail,
+       stale           : _stale,
+       ttl             : _ttl,
+       dedup           : _dedup,
+       drop            : _dropped,
+       txseq           : _tx_seq,
+       txfwd           : _tx_fwd
+    };
+    AP::logger().WriteBlock(&pkt_swarmmesh, sizeof(pkt_swarmmesh));
+}
+#endif  // HAL_LOGGING_ENABLED
 
 #endif  // AP_SWARMMESH_SERIAL_ENABLED

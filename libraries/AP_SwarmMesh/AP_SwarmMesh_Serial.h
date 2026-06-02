@@ -20,6 +20,7 @@
 #if AP_SWARMMESH_SERIAL_ENABLED
 
 #include "AP_SwarmMesh_packet.h"
+#include <GCS_MAVLink/GCS_MAVLink.h>
 
 // fixed header + max payload (header CRC is embedded in the header struct, not appended)
 #define SWARMMESH_MAX_PAYLOAD 255
@@ -54,19 +55,30 @@ private:
     uint8_t  _payload_len;                      // payload_len from header (matches packet field type)
     uint8_t  _crc;                              // calculated crc which is compared against actual received crc
     uint32_t _last_rx_ms;                       // last time we receive data from peer
-    uint16_t _tx_seq;                           // sequence number of sent packets
+    uint16_t _tx_seq;                           // sequence number of sent original packets
+    uint16_t _tx_fwd;                           // sequence number of forwarded packets
     uint16_t _crc_fail;                         // CRC mismatch counter
     uint16_t _stale;                            // stale packet counter
     uint16_t _ttl;                              // ttl packet counter
     uint16_t _dedup;                            // duplicate packet counter
     uint16_t _dropped;                          // dropped packet counter
     uint8_t  _type;                             // packet type (0 == MAVLink)
-    
+
+    // persistent MAVLink byte-level parser state
+    mavlink_message_t _mavlink_rxmsg;
+    mavlink_status_t  _mavlink_rx_status;
+
     // process one incoming byte; returns true when a complete, valid packet has been assembled in _msgbuf
     bool parse_byte(uint8_t b);
 
-    // called when parse_byte() returns true and type == 0 (writes peer state into frontend)
-    void process_mavlink();
+    // called in process_packet() when type = 0 (MAVLink)
+    void handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps);
+
+    // called when parse_byte() returns true (writes peer state into frontend)
+    void process_packet();
+
+    // write backend performance counters to the onboard log
+    void log_stats() override;
 
     // TX path
     // Generated MAVLink. Serialize header + payload into a framed packet and write to UART

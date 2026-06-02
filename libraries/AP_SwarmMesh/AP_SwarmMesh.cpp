@@ -205,31 +205,12 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
 }
 
 #if HAL_LOGGING_ENABLED
-// Write incoming peer data
 void AP_SwarmMesh::log()
 {
-    if (!enabled()) {
+    if (!device_ready()) {
         return;
     }
-    // position
-    //Vector3f pos;
-    //float accuracy = 0.0f;
-    //get_vehicle_position_ned(pos, accuracy);
-
-    //const struct log_Beacon pkt_beacon{
-    //   LOG_PACKET_HEADER_INIT(LOG_BEACON_MSG),
-    //   time_us         : AP_HAL::micros64(),
-    //   health          : (uint8_t)healthy(),
-    //   count           : (uint8_t)count(),
-    //   dist0           : beacon_distance(0),
-    //   dist1           : beacon_distance(1),
-    //   dist2           : beacon_distance(2),
-    //   dist3           : beacon_distance(3),
-    //   posx            : pos.x,
-    //   posy            : pos.y,
-    //   posz            : pos.z
-    //};
-    //AP::logger().WriteBlock(&pkt_beacon, sizeof(pkt_beacon));
+    _driver->log_stats();
 }
 #endif
 
