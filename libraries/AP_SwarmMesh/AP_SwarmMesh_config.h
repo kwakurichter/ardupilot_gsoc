@@ -21,3 +21,12 @@
 #ifndef AP_SWARMMESH_MAX_PEERS
 #define AP_SWARMMESH_MAX_PEERS 16
 #endif
+
+// TX stream rates (Hz) for each hardware profile.
+#ifndef AP_SWARMMESH_FULL_HZ
+#define AP_SWARMMESH_FULL_HZ 200
+#endif
+
+#ifndef AP_SWARMMESH_LITE_HZ
+#define AP_SWARMMESH_LITE_HZ 10
+#endif

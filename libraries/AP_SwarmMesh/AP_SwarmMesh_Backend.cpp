@@ -49,4 +49,34 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peerstate(uint8_t peer_s
     return _frontend.find_or_alloc_peer(peer_sysid);
 }
 
+// lite profile accessor
+uint16_t AP_SwarmMesh_Backend::frontend_lite() const
+{
+    return (uint16_t)_frontend.lite_mask;
+}
+
+// full profile accessor
+uint32_t AP_SwarmMesh_Backend::frontend_full() const
+{
+    return (uint32_t)_frontend.full_mask;
+}
+
+// Returns true if the Full message profile should be used.
+// Bit 0 of stream means a Full-capable radio is fitted.
+// Even with a Full radio, STM32F4 FCs are downgraded to Lite at compile time.
+bool AP_SwarmMesh_Backend::frontend_uses_full() const
+{
+    const uint8_t hw = (uint8_t)_frontend.stream;
+    if (!(hw & 0x01)) {
+        // Lite radio hardware — always Lite
+        return false;
+    }
+#if defined(STM32F4)
+    // Full radio fitted but F4 CPU cannot sustain the Full message set
+    return false;
+#else
+    return true;
+#endif
+}
+
 #endif  // AP_SWARMMESH_ENABLED

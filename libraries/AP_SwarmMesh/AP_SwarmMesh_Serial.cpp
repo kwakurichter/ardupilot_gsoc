@@ -58,7 +58,20 @@ void AP_SwarmMesh_Serial::update(void)
         }
     }
 
-    // TODO: Implement TX outbound path
+    // TX send path
+    const bool use_full = frontend_uses_full();
+    const uint32_t interval_ms = use_full ? (1000U / AP_SWARMMESH_FULL_HZ) : (1000U / AP_SWARMMESH_LITE_HZ);
+    const uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - _last_stream_ms < interval_ms) {
+        return;
+    }
+    _last_stream_ms = now_ms;
+
+    const uint32_t enabled_mask = use_full ? frontend_full() : (uint32_t)frontend_lite();
+    if (enabled_mask == 0) {
+        return;
+    }
+    //send_stream(enabled_mask);
 }
 
 // process one byte received on serial port. Message is stored in _msgbuf.

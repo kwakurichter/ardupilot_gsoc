@@ -64,6 +64,7 @@ private:
     uint16_t _dedup;                            // duplicate packet counter
     uint16_t _dropped;                          // dropped packet counter
     uint8_t  _type;                             // packet type (0 == MAVLink)
+    uint32_t _last_stream_ms;                   // last tx stream send
 
     // persistent MAVLink byte-level parser state
     mavlink_message_t _mavlink_rxmsg;
