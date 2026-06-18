@@ -103,6 +103,9 @@ public:
     // a method for vehicles to call to make onboard log messages:
     void log();
 
+    // number of SR stream buckets (must match the SR_* param entries in var_info)
+    static constexpr uint8_t NUM_BUCKETS = 3;
+
 private:
 
     // return true if driver is instantiated and type is not None
@@ -116,13 +119,12 @@ private:
 
     // parameters
     AP_Enum<Type> _type;
-    AP_Int8  stream;
-    AP_Int16 lite_mask;
-    AP_Int32 full_mask;
+    AP_Int8  stream_rate[NUM_BUCKETS];  // SR_POSITION, SR_EXT_STAT, SR_EXTRA1 (Hz; 0 = disabled)
     AP_Int8  swarm_size;
     AP_Int8  destination_id;
     AP_Int8  sysid;
     AP_Int8  ttl;
+    AP_Int8  hardware_mask;
 
     // external references
     AP_SwarmMesh_Backend *_driver;

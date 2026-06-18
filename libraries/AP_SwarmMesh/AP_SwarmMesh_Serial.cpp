@@ -58,20 +58,22 @@ void AP_SwarmMesh_Serial::update(void)
         }
     }
 
-    // TX send path
-    const bool use_full = frontend_uses_full();
-    const uint32_t interval_ms = use_full ? (1000U / AP_SWARMMESH_FULL_HZ) : (1000U / AP_SWARMMESH_LITE_HZ);
+    // TX send path — each bucket fires independently at its SR rate, capped by hardware limit (Lite or Full)
     const uint32_t now_ms = AP_HAL::millis();
-    if (now_ms - _last_stream_ms < interval_ms) {
-        return;
-    }
-    _last_stream_ms = now_ms;
+    const uint32_t hw_min_interval_ms = frontend_uses_full() ? (1000U / AP_SWARMMESH_FULL_HZ) : (1000U / AP_SWARMMESH_LITE_HZ);
 
-    const uint32_t enabled_mask = use_full ? frontend_full() : (uint32_t)frontend_lite();
-    if (enabled_mask == 0) {
-        return;
+    for (uint8_t i = 0; i < AP_SwarmMesh::NUM_BUCKETS; i++) {
+        const uint8_t rate_hz = frontend_sr_rate(i);
+        if (rate_hz == 0) {
+            continue;
+        }
+        const uint32_t interval_ms = MAX(1000U / (uint32_t)rate_hz, hw_min_interval_ms);
+        if (now_ms - _last_bucket_ms[i] < interval_ms) {
+            continue;
+        }
+        _last_bucket_ms[i] = now_ms;
+        send_stream(static_cast<Bucket>(i));
     }
-    //send_stream(enabled_mask);
 }
 
 // process one byte received on serial port. Message is stored in _msgbuf.
@@ -421,6 +423,27 @@ void AP_SwarmMesh_Serial::forward_mavlink(uint8_t id, uint8_t dest_id, const uin
     uart->write(payload, payload_len);      
 
     _tx_fwd++;
+}
+
+void AP_SwarmMesh_Serial::send_stream(Bucket bucket)
+{
+    switch (bucket) {
+    case Bucket::POSITION:
+        // TODO: GLOBAL_POSITION_INT
+        // TODO: LOCAL_POSITION_NED
+        break;
+    case Bucket::EXT_STAT:
+        // TODO: SYS_STATUS
+        // TODO: NAV_CONTROLLER_OUTPUT
+        // TODO: POSITION_TARGET_GLOBAL_INT
+        // TODO: MISSION_CURRENT
+        break;
+    case Bucket::EXTRA1:
+        // TODO: ATTITUDE
+        // TODO: EKF_STATUS_REPORT
+        break;
+    }
+    // TODO: Add mode buckets
 }
 
 #if HAL_LOGGING_ENABLED

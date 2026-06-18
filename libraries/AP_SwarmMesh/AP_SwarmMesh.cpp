@@ -39,32 +39,31 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @Description: Which communication backend are you using
     // @Values: 0:None,1:Serial,10:SITL
     // @User: Advanced
-    AP_GROUPINFO_FLAGS("_TYPE",    0, AP_SwarmMesh, _type, 0, AP_PARAM_FLAG_ENABLE),
+    AP_GROUPINFO_FLAGS("_TYPE", 0, AP_SwarmMesh, _type, 0, AP_PARAM_FLAG_ENABLE),
 
-    // @Param: _STREAM
-    // @DisplayName: Stream type
-    // @Description: Stream type
-    // @Values: 0:None,1:Lite,2:Full
+    // @Param: SR_POSITION
+    // @DisplayName: Position stream rate
+    // @Description: Rate at which GLOBAL_POSITION_INT and LOCAL_POSITION_NED are broadcast (Hz). 0 disables.
+    // @Units: Hz
+    // @Range: 0 50
     // @User: Advanced
-    AP_GROUPINFO("_STREAM", 1, AP_SwarmMesh, stream, 0),
+    AP_GROUPINFO("SR_POSITION", 1, AP_SwarmMesh, stream_rate[0], 0),
 
-    // @Param: _LITE_MASK
-    // @DisplayName: Bitmask for Lite stream
-    // @Description: 
-    // @Units: deg
-    // @Increment: 0.000001
-    // @Range: -180 180
+    // @Param: SR_EXT_STAT
+    // @DisplayName: Extended status stream rate
+    // @Description: Rate at which SYS_STATUS, NAV_CONTROLLER_OUTPUT, POSITION_TARGET_GLOBAL_INT and MISSION_CURRENT are broadcast (Hz). 0 disables.
+    // @Units: Hz
+    // @Range: 0 50
     // @User: Advanced
-    AP_GROUPINFO("_LITE_MASK", 2, AP_SwarmMesh, lite_mask, 0),
+    AP_GROUPINFO("SR_EXT_STAT", 2, AP_SwarmMesh, stream_rate[1], 0),
 
-    // @Param: _FULL_MASK
-    // @DisplayName: Bitmask for Full stream
-    // @Description:
-    // @Units: m
-    // @Increment: 1
-    // @Range: 0 10000
+    // @Param: SR_EXTRA1
+    // @DisplayName: Extra 1 stream rate
+    // @Description: Rate at which ATTITUDE and EKF_STATUS_REPORT are broadcast (Hz). 0 disables.
+    // @Units: Hz
+    // @Range: 0 50
     // @User: Advanced
-    AP_GROUPINFO("_FULL_MASK", 3, AP_SwarmMesh, full_mask, 0),
+    AP_GROUPINFO("SR_EXTRA1", 3, AP_SwarmMesh, stream_rate[2], 0),
 
     // @Param: _SWARM_SIZE
     // @DisplayName: Swarm size
@@ -97,6 +96,13 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @Range: 0 255
     // @User: Advanced
     AP_GROUPINFO("_TTL", 7, AP_SwarmMesh, ttl, 255),
+
+    // @Param: _HW_MASK
+    // @DisplayName: Radio hardware capability
+    // @Description: Bitmask describing the radio hardware attached. Bit 0: Full capacity radio. If clear, Lite radio assumed. The FC CPU class may further restrict to Lite regardless of radio.
+    // @Bitmask: 0:Full radio
+    // @User: Advanced
+    AP_GROUPINFO("_HW_MASK", 8, AP_SwarmMesh, hardware_mask, 0),
 
     AP_GROUPEND
 };

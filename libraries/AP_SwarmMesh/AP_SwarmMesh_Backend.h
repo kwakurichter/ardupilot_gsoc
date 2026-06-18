@@ -49,12 +49,9 @@ protected:
     // find or alloc a peer entry in the frontend table by sysid (returns nullptr if table is full)
     AP_SwarmMesh::PeerState *frontend_peerstate(uint8_t peer_sysid);
 
-    // accessor for the lite bitmask param
-    uint16_t frontend_lite() const;
+    // returns the stream rate (Hz) for the given bucket index. 0 if disabled.
+    uint8_t frontend_sr_rate(uint8_t bucket) const;
 
-    // accessor for the full bitmask param
-    uint32_t frontend_full() const;
-    
     // returns true if the Full message profile should be used (Full radio + capable FC)
     bool frontend_uses_full() const;
 };

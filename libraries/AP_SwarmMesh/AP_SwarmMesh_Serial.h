@@ -41,6 +41,14 @@ public:
 
 private:
 
+    // TX stream buckets (order must match SR_* param indices in AP_SwarmMesh::var_info)
+    enum class Bucket : uint8_t {
+        POSITION = 0,   // GLOBAL_POSITION_INT, LOCAL_POSITION_NED
+        EXT_STAT = 1,   // SYS_STATUS, NAV_CONTROLLER_OUTPUT, POSITION_TARGET_GLOBAL_INT, MISSION_CURRENT
+        EXTRA1   = 2,   // ATTITUDE, EKF_STATUS_REPORT
+        // TODO: Add more buckets
+    };
+
     // RX state machine
     enum class ParseState : uint8_t {
         WAIT_SYNC1,         // waiting for 0xAD
@@ -64,7 +72,7 @@ private:
     uint16_t _dedup;                            // duplicate packet counter
     uint16_t _dropped;                          // dropped packet counter
     uint8_t  _type;                             // packet type (0 == MAVLink)
-    uint32_t _last_stream_ms;                   // last tx stream send
+    uint32_t _last_bucket_ms[AP_SwarmMesh::NUM_BUCKETS]; // last send time per bucket
 
     // persistent MAVLink byte-level parser state
     mavlink_message_t _mavlink_rxmsg;
@@ -83,9 +91,11 @@ private:
     void log_stats() override;
 
     // TX path
+    void send_stream(Bucket bucket);
+
     // Generated MAVLink. Serialize header + payload into a framed packet and write to UART
-    void send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len);  
-    
+    void send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len);
+
     // Forwarded MAVLink. Serialize header + payload into a framed packet and write to UART
     void forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq);
 

@@ -49,16 +49,13 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peerstate(uint8_t peer_s
     return _frontend.find_or_alloc_peer(peer_sysid);
 }
 
-// lite profile accessor
-uint16_t AP_SwarmMesh_Backend::frontend_lite() const
+// returns the SR stream rate (Hz) for a given bucket. 0 if the index is out of range or param is zero.
+uint8_t AP_SwarmMesh_Backend::frontend_sr_rate(uint8_t bucket) const
 {
-    return (uint16_t)_frontend.lite_mask;
-}
-
-// full profile accessor
-uint32_t AP_SwarmMesh_Backend::frontend_full() const
-{
-    return (uint32_t)_frontend.full_mask;
+    if (bucket >= AP_SwarmMesh::NUM_BUCKETS) {
+        return 0;
+    }
+    return MAX(0, (int8_t)_frontend.stream_rate[bucket]);
 }
 
 // Returns true if the Full message profile should be used.
@@ -66,7 +63,7 @@ uint32_t AP_SwarmMesh_Backend::frontend_full() const
 // Even with a Full radio, STM32F4 FCs are downgraded to Lite at compile time.
 bool AP_SwarmMesh_Backend::frontend_uses_full() const
 {
-    const uint8_t hw = (uint8_t)_frontend.stream;
+    const uint8_t hw = (uint8_t)_frontend.hardware_mask;
     if (!(hw & 0x01)) {
         // Lite radio hardware — always Lite
         return false;
