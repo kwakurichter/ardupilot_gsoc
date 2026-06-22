@@ -21,6 +21,7 @@
 
 #include "AP_SwarmMesh_packet.h"
 #include <GCS_MAVLink/GCS_MAVLink.h>
+#include <AP_AHRS/AP_AHRS_config.h>
 
 // fixed header + max payload (header CRC is embedded in the header struct, not appended)
 #define SWARMMESH_MAX_PAYLOAD 255
@@ -73,6 +74,7 @@ private:
     uint16_t _dropped;                          // dropped packet counter
     uint8_t  _type;                             // packet type (0 == MAVLink)
     uint32_t _last_bucket_ms[AP_SwarmMesh::NUM_BUCKETS]; // last send time per bucket
+    uint32_t _last_heartbeat_ms;                // last heartbeat send time (independent of bucket timing)
 
     // persistent MAVLink byte-level parser state
     mavlink_message_t _mavlink_rxmsg;
@@ -94,10 +96,23 @@ private:
     void send_stream(Bucket bucket);
 
     // Generated MAVLink. Serialize header + payload into a framed packet and write to UART
-    void send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len);
+    void send_mavlink(uint8_t dest_id, const mavlink_message_t *msg, uint16_t deadline_ms, uint8_t ttl);
 
     // Forwarded MAVLink. Serialize header + payload into a framed packet and write to UART
     void forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq);
+
+    // Buckets
+    void send_heartbeat();
+#if AP_AHRS_ENABLED
+    void send_global_position_int();
+    void send_local_position();
+    void send_attitude();
+    void send_ekf_status_report();
+#endif
+    void send_sys_status();
+    void send_nav_controller_output();
+    void send_position_target_global_int();
+    void send_extended_sys_state();
 
 };
 

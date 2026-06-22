@@ -46,6 +46,12 @@ protected:
     // accessor for the sysid param
     uint8_t frontend_sysid() const;
 
+    // accessor for the destination_id param
+    uint8_t frontend_dest_id() const;
+
+    // accessor for the ttl param
+    uint8_t frontend_ttl() const;
+
     // find or alloc a peer entry in the frontend table by sysid (returns nullptr if table is full)
     AP_SwarmMesh::PeerState *frontend_peerstate(uint8_t peer_sysid);
 

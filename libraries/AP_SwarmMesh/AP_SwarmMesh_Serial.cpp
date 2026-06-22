@@ -21,6 +21,14 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_RTC/AP_RTC.h>
 #include <AP_Logger/AP_Logger.h>
+#include <AP_AHRS/AP_AHRS.h>
+#include <AP_Common/AP_Common.h>
+
+#include <AP_BattMonitor/AP_BattMonitor_config.h>
+#if AP_BATTERY_ENABLED
+#include <AP_BattMonitor/AP_BattMonitor.h>
+#endif
+#include <AP_Vehicle/AP_Vehicle.h>
 
 
 #define SWARMMESH_SYNC1                     0xAD    // SYNC1
@@ -58,8 +66,17 @@ void AP_SwarmMesh_Serial::update(void)
         }
     }
 
-    // TX send path — each bucket fires independently at its SR rate, capped by hardware limit (Lite or Full)
+    // TX send path
     const uint32_t now_ms = AP_HAL::millis();
+
+    // heartbeat is always on, independent of SR_* stream config
+    static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000U; // 1Hz
+    if (now_ms - _last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
+        _last_heartbeat_ms = now_ms;
+        send_heartbeat();
+    }
+
+    // each bucket fires independently at its SR rate, capped by hardware limit (Lite or Full)
     const uint32_t hw_min_interval_ms = frontend_uses_full() ? (1000U / AP_SWARMMESH_FULL_HZ) : (1000U / AP_SWARMMESH_LITE_HZ);
 
     for (uint8_t i = 0; i < AP_SwarmMesh::NUM_BUCKETS; i++) {
@@ -335,11 +352,14 @@ void AP_SwarmMesh_Serial::process_packet()
     }
 }
 
-void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len)
+void AP_SwarmMesh_Serial::send_mavlink(uint8_t dest_id, const mavlink_message_t *msg, uint16_t deadline_ms, uint8_t ttl)
 {
     if (uart == nullptr) {
         return;
     }
+
+    uint8_t payload[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t payload_len = mavlink_msg_to_send_buffer(payload, msg);
 
     // guard: full packet must fit in the TX ring buffer
     if (uart->txspace() < SWARMMESH_HEADER_SIZE + payload_len) {
@@ -429,21 +449,349 @@ void AP_SwarmMesh_Serial::send_stream(Bucket bucket)
 {
     switch (bucket) {
     case Bucket::POSITION:
-        // TODO: GLOBAL_POSITION_INT
-        // TODO: LOCAL_POSITION_NED
+#if AP_AHRS_ENABLED
+        send_global_position_int();
+        send_local_position();
+#endif
         break;
     case Bucket::EXT_STAT:
-        // TODO: SYS_STATUS
-        // TODO: NAV_CONTROLLER_OUTPUT
-        // TODO: POSITION_TARGET_GLOBAL_INT
-        // TODO: MISSION_CURRENT
+        send_sys_status();
+        send_nav_controller_output();
+        send_position_target_global_int();
         break;
     case Bucket::EXTRA1:
-        // TODO: ATTITUDE
-        // TODO: EKF_STATUS_REPORT
+#if AP_AHRS_ENABLED
+        send_attitude();
+        send_ekf_status_report();
+#endif
+        send_extended_sys_state();
         break;
     }
     // TODO: Add mode buckets
+}
+
+void AP_SwarmMesh_Serial::send_heartbeat()
+{
+    // TODO: base_mode()/system_status() are per-vehicle GCS_MAVLINK overrides we have no access to (no vehicle reference)
+    const bool armed = AP_HAL::get_HAL().util->get_soft_armed();
+    uint8_t base_mode = MAV_MODE_FLAG_STABILIZE_ENABLED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED;
+    if (armed) {
+        base_mode |= MAV_MODE_FLAG_SAFETY_ARMED;
+    }
+    const MAV_STATE system_status = armed ? MAV_STATE_ACTIVE : MAV_STATE_STANDBY;
+
+    mavlink_message_t msg;
+    mavlink_msg_heartbeat_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        gcs().frame_type(),
+        MAV_AUTOPILOT_ARDUPILOTMEGA,
+        base_mode,
+        gcs().custom_mode(),
+        system_status);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+#if AP_AHRS_ENABLED
+void AP_SwarmMesh_Serial::send_global_position_int()
+{
+    AP_AHRS &ahrs = AP::ahrs();
+
+    Location loc;
+    UNUSED_RESULT(ahrs.get_location(loc));
+
+    Vector3f vel;
+    if (!ahrs.get_velocity_NED(vel)) {
+        vel.zero();
+    }
+
+    // inline relative-alt helper: distance above home in mm (up positive)
+    float posD;
+    ahrs.get_relative_position_D_home(posD);
+    const int32_t relative_alt_mm = (int32_t)(-posD * 1000.0f);
+
+    mavlink_message_t msg;
+    mavlink_msg_global_position_int_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        loc.lat,                    // degE7
+        loc.lng,                    // degE7
+        loc.alt * 10,               // mm above MSL (Location stores cm)
+        relative_alt_mm,            // mm above home
+        (int16_t)(vel.x * 100),     // cm/s North
+        (int16_t)(vel.y * 100),     // cm/s East
+        (int16_t)(vel.z * 100),     // cm/s Down
+        ahrs.yaw_sensor);           // cdeg
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Serial::send_local_position()
+{
+    const AP_AHRS &ahrs = AP::ahrs();
+
+    Vector3f pos, vel;
+    if (!ahrs.get_relative_position_NED_origin_float(pos) ||
+        !ahrs.get_velocity_NED(vel)) {
+        return;
+    }
+
+    mavlink_message_t msg;
+    mavlink_msg_local_position_ned_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        pos.x, pos.y, pos.z,
+        vel.x, vel.y, vel.z);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+#endif  // AP_AHRS_ENABLED
+
+// TODO: Access AC_PosControl (with guard) to fill in vel/accel targets
+void AP_SwarmMesh_Serial::send_position_target_global_int()
+{
+    AP_Vehicle *vehicle = AP::vehicle();
+    if (vehicle == nullptr) {
+        return;
+    }
+
+    Location target;
+    if (!vehicle->get_target_location(target)) {
+        return;
+    }
+    if (!target.initialised()) {
+        return;
+    }
+    float alt_amsl_m;
+    if (!target.get_alt_m(Location::AltFrame::ABSOLUTE, alt_amsl_m)) {
+        return;
+    }
+
+    static constexpr uint16_t POSITION_TARGET_TYPEMASK_LAST_BYTE = 0xF000;
+    static constexpr uint16_t TYPE_MASK =
+        POSITION_TARGET_TYPEMASK_VX_IGNORE | POSITION_TARGET_TYPEMASK_VY_IGNORE |
+        POSITION_TARGET_TYPEMASK_VZ_IGNORE | POSITION_TARGET_TYPEMASK_AX_IGNORE |
+        POSITION_TARGET_TYPEMASK_AY_IGNORE | POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+        POSITION_TARGET_TYPEMASK_YAW_IGNORE | POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE |
+        POSITION_TARGET_TYPEMASK_LAST_BYTE;
+
+    mavlink_message_t msg;
+    mavlink_msg_position_target_global_int_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),   // time_boot_ms
+        MAV_FRAME_GLOBAL,   // targets are always global altitude
+        TYPE_MASK,          // ignore everything except the x/y/z components
+        target.lat,         // latitude as 1e7
+        target.lng,         // longitude as 1e7
+        alt_amsl_m,         // altitude AMSL in metres
+        0.0f, 0.0f, 0.0f,   // vx, vy, vz
+        0.0f, 0.0f, 0.0f,   // afx, afy, afz
+        0.0f,               // yaw
+        0.0f);              // yaw_rate
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Serial::send_extended_sys_state()
+{
+    // TODO: landed_state()/vtol_state() are per-vehicle GCS_MAVLINK overrides we have no access to
+    MAV_LANDED_STATE landed_state = MAV_LANDED_STATE_UNDEFINED;
+    AP_Vehicle *vehicle = AP::vehicle();
+    if (vehicle != nullptr) {
+        if (!vehicle->get_likely_flying()) {
+            landed_state = MAV_LANDED_STATE_ON_GROUND;
+        } else if (vehicle->is_landing()) {
+            landed_state = MAV_LANDED_STATE_LANDING;
+        } else if (vehicle->is_taking_off()) {
+            landed_state = MAV_LANDED_STATE_TAKEOFF;
+        } else {
+            landed_state = MAV_LANDED_STATE_IN_AIR;
+        }
+    }
+
+    mavlink_message_t msg;
+    mavlink_msg_extended_sys_state_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        MAV_VTOL_STATE_UNDEFINED,  // no generic VTOL-state source
+        landed_state);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+#if AP_AHRS_ENABLED
+void AP_SwarmMesh_Serial::send_attitude()
+{
+    const AP_AHRS &ahrs = AP::ahrs();
+    const Vector3f omega = ahrs.get_gyro();
+    mavlink_message_t msg;
+    mavlink_msg_attitude_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        ahrs.get_roll_rad(),
+        ahrs.get_pitch_rad(),
+        ahrs.get_yaw_rad(),
+        omega.x,
+        omega.y,
+        omega.z);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Serial::send_ekf_status_report()
+{
+    nav_filter_status filter_status{};
+    AP::ahrs().get_filter_status(filter_status);
+
+    uint16_t flags = 0;
+    if (filter_status.flags.attitude) {
+        flags |= EKF_ATTITUDE;
+    }
+    if (filter_status.flags.horiz_vel) {
+        flags |= EKF_VELOCITY_HORIZ;
+    }
+    if (filter_status.flags.vert_vel) {
+        flags |= EKF_VELOCITY_VERT;
+    }
+    if (filter_status.flags.horiz_pos_rel) {
+        flags |= EKF_POS_HORIZ_REL;
+    }
+    if (filter_status.flags.horiz_pos_abs) {
+        flags |= EKF_POS_HORIZ_ABS;
+    }
+    if (filter_status.flags.vert_pos) {
+        flags |= EKF_POS_VERT_ABS;
+    }
+    if (filter_status.flags.terrain_alt) {
+        flags |= EKF_POS_VERT_AGL;
+    }
+    if (filter_status.flags.const_pos_mode) {
+        flags |= EKF_CONST_POS_MODE;
+    }
+    if (filter_status.flags.pred_horiz_pos_rel) {
+        flags |= EKF_PRED_POS_HORIZ_REL;
+    }
+    if (filter_status.flags.pred_horiz_pos_abs) {
+        flags |= EKF_PRED_POS_HORIZ_ABS;
+    }
+    if (!filter_status.flags.initalized) {
+        flags |= EKF_UNINITIALIZED;
+    }
+    if (filter_status.flags.gps_glitching) {
+        flags |= (1U << 15);
+    }
+
+    float velVar = 0, posVar = 0, hgtVar = 0, tasVar = 0;
+    Vector3f magVar;
+    AP::ahrs().get_variances(velVar, posVar, hgtVar, magVar, tasVar);
+
+    mavlink_message_t msg;
+    mavlink_msg_ekf_status_report_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        flags,
+        velVar,
+        posVar,
+        hgtVar,
+        fmaxf(fmaxf(magVar.x, magVar.y), magVar.z),
+        0,          // terrain_alt_variance
+        tasVar);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+#endif  // AP_AHRS_ENABLED
+
+// TODO: Fill in empty fields
+void AP_SwarmMesh_Serial::send_sys_status()
+{
+    float voltage_mv = 0;
+    float current_ca = -1; // 10mA units; -1 = unknown
+    int8_t remaining_pct = -1;
+
+#if AP_BATTERY_ENABLED
+    const AP_BattMonitor &battery = AP::battery();
+    if (battery.healthy()) {
+        voltage_mv = battery.gcs_voltage() * 1000.0f;
+        float amps;
+        if (battery.current_amps(amps)) {
+            current_ca = constrain_float(amps * 100.0f, -INT16_MAX, INT16_MAX);
+        }
+        uint8_t pct;
+        if (battery.capacity_remaining_pct(pct)) {
+            remaining_pct = (int8_t)pct;
+        }
+    }
+#endif
+
+    mavlink_message_t msg;
+    mavlink_msg_sys_status_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        0,                  // onboard_control_sensors_present
+        0,                  // onboard_control_sensors_enabled
+        0,                  // onboard_control_sensors_health
+        0,                  // load (permille); not tracked here
+        (uint16_t)voltage_mv,
+        (int16_t)current_ca,
+        remaining_pct,
+        0,                  // drop_rate_comm
+        0,                  // errors_comm
+        0, 0, 0, 0,         // errors_count1-4
+        0, 0, 0);           // extended sensor fields
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+// TODO: Find way to access control targets to fill in empty
+void AP_SwarmMesh_Serial::send_nav_controller_output()
+{
+    // TODO: SwarmMesh has no access to mode-specific control targets (no vehicle reference)
+    float nav_roll_deg = 0;
+    float nav_pitch_deg = 0;
+// #if AP_AHRS_ENABLED
+//     const AP_AHRS &ahrs = AP::ahrs();
+//     nav_roll_deg = degrees(ahrs.get_roll_rad());
+//     nav_pitch_deg = degrees(ahrs.get_pitch_rad());
+// #endif
+
+    float wp_bearing_deg = 0;
+    float wp_distance_m = 0;
+    float xtrack_error_m = 0;
+    AP_Vehicle *vehicle = AP::vehicle();
+    if (vehicle != nullptr) {
+        vehicle->get_wp_bearing_deg(wp_bearing_deg);
+        vehicle->get_wp_distance_m(wp_distance_m);
+        vehicle->get_wp_crosstrack_error_m(xtrack_error_m);
+    }
+
+    mavlink_message_t msg;
+    mavlink_msg_nav_controller_output_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        nav_roll_deg,
+        nav_pitch_deg,
+        (int16_t)wp_bearing_deg,
+        (int16_t)wp_bearing_deg,           // target_bearing: no separate target available
+        (uint16_t)MIN(wp_distance_m, (float)UINT16_MAX),
+        0,                                  // alt_error
+        0,                                  // aspd_error
+        xtrack_error_m);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
 }
 
 #if HAL_LOGGING_ENABLED
