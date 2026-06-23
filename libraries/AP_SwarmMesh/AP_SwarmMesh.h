@@ -68,8 +68,8 @@ public:
         // Vehicle state
         uint8_t  mode;
         bool     armed_state;   // true: armed, false: disarmed
-        bool     landed_state;  // true: landed, false: not landed
-        uint8_t  failsafe_flags;
+        uint8_t  landed_state;  // MAV_LANDED_STATE: 0 undefined, 1 on ground, 2 in air, 3 takeoff, 4 landing
+        uint32_t failsafe_flags; // bitmask of unhealthy sensors (present & enabled & !health), MAV_SYS_STATUS_SENSOR bits
         uint16_t battery_voltage;
         uint8_t  health_flags;
         // Coordination state

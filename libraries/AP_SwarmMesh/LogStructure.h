@@ -61,12 +61,14 @@ struct PACKED log_SwarmMesh_HB {
 // @Field: TimeUS: Time since system startup
 // @Field: SysID: SysID of origin
 // @Field: BVol: Battery voltage
+// @Field: FS: Failsafe flags (unhealthy-sensor bitmask)
 
 struct PACKED log_SwarmMesh_SS {
     LOG_PACKET_HEADER;
     uint64_t time_us;
     uint8_t  sysid;
     uint16_t bat_voltage;
+    uint32_t failsafe;
 };
 
 // @LoggerMessage: SMGP
@@ -176,7 +178,7 @@ struct PACKED log_SwarmMesh_EK {
     { LOG_SWARMMESH_HB_MSG, sizeof(log_SwarmMesh_HB), \
         "SMHB", "QBBBB",  "TimeUS,SysID,VType,Mode,Arm", "s----", "F----", true },  \
     { LOG_SWARMMESH_SS_MSG, sizeof(log_SwarmMesh_SS), \
-        "SMSS", "QBH",  "TimeUS,SysID,BVol", "s--", "F--", true },  \
+        "SMSS", "QBHI",  "TimeUS,SysID,BVol,FS", "s---", "F---", true },  \
     { LOG_SWARMMESH_GP_MSG, sizeof(log_SwarmMesh_GP), \
         "SMGP", "QBLLi",  "TimeUS,SysID,Lat,Lon,Alt", "s----", "F----", true },  \
     { LOG_SWARMMESH_LP_MSG, sizeof(log_SwarmMesh_LP), \

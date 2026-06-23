@@ -191,12 +191,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         mavlink_sys_status_t ss;
         mavlink_msg_sys_status_decode(&msg, &ss);
         ps.battery_voltage = ss.voltage_battery;
+        // a sensor counts as failing if it's present+enabled but not healthy
+        ps.failsafe_flags = ss.onboard_control_sensors_present
+                           & ss.onboard_control_sensors_enabled
+                           & ~ss.onboard_control_sensors_health;
 #if HAL_LOGGING_ENABLED
         const struct log_SwarmMesh_SS pkt_ss{
             LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_SS_MSG),
             time_us     : AP_HAL::micros64(),
             sysid       : ps.sysid,
-            bat_voltage : ps.battery_voltage
+            bat_voltage : ps.battery_voltage,
+            failsafe    : ps.failsafe_flags
         };
         AP::logger().WriteBlock(&pkt_ss, sizeof(pkt_ss));
 #endif
@@ -323,6 +328,7 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
 
     default:
         _dropped++;
+        ps.drop_count++;
         break;
     }
 }
@@ -348,6 +354,11 @@ void AP_SwarmMesh_Serial::process_packet()
         return;
     }
 
+    // Freshness: per-peer, based on time since we last heard from THIS peer
+    static constexpr uint64_t FRESHNESS_BUDGET_US = 1000ULL * 1000U; // 1s
+    const uint64_t now_us = AP_HAL::micros64();
+    ps->freshness = (now_us - ps->last_heard) <= FRESHNESS_BUDGET_US;
+
     if (ps->seq_seen_mask == 0) {
         // first packet ever from this peer: always accept, initialise window
         ps->seq_seen_mask = 1;
@@ -359,6 +370,7 @@ void AP_SwarmMesh_Serial::process_packet()
         if (delta == 0) {
             // exact duplicate
             _dedup++;
+            ps->drop_count++;
             return;
         } else if (delta > 0 && delta < 32) {
             // new packet within window — advance window, mark current seq
@@ -373,12 +385,14 @@ void AP_SwarmMesh_Serial::process_packet()
             const uint32_t bit = 1U << (uint8_t)(-delta);
             if (ps->seq_seen_mask & bit) {
                 _dedup++;
+                ps->drop_count++;
                 return;
             }
             ps->seq_seen_mask |= bit;
         } else {
             // too old, outside window (drop)
             _dropped++;
+            ps->drop_count++;
             return;
         }
     }
@@ -393,6 +407,7 @@ void AP_SwarmMesh_Serial::process_packet()
         if (utc_usec > hdr->origin_time_us && (utc_usec - hdr->origin_time_us) > deadline_us) {
             // stale, past freshness budget
             _stale++;
+            ps->drop_count++;
             return;
         }
 #endif
@@ -401,6 +416,7 @@ void AP_SwarmMesh_Serial::process_packet()
     if (hdr->ttl == 0) {
         // TTL expired (drop)
         _ttl++;
+        ps->drop_count++;
         return;
     }
 
@@ -415,6 +431,9 @@ void AP_SwarmMesh_Serial::process_packet()
     }
 
     if (hdr->type == SWARMMESH_TYPE_MAVLINK) {
+        ps->last_heard = AP_HAL::micros64();
+        ps->prev_id = hdr->prev_id;
+        ps->rx_count++;
         // feed the raw MAVLink frame bytes through the parser
         mavlink_message_t msg;
         const uint8_t *payload = &_msgbuf[SWARMMESH_HEADER_SIZE];
@@ -425,6 +444,7 @@ void AP_SwarmMesh_Serial::process_packet()
         }
     } else {
         _dropped++;
+        ps->drop_count++;
     }
 }
 
@@ -811,14 +831,19 @@ void AP_SwarmMesh_Serial::send_sys_status()
     }
 #endif
 
+    uint32_t sensors_present = 0;
+    uint32_t sensors_enabled = 0;
+    uint32_t sensors_health = 0;
+    gcs().get_sensor_status_flags(sensors_present, sensors_enabled, sensors_health);
+
     mavlink_message_t msg;
     mavlink_msg_sys_status_pack(
         frontend_sysid(),
         MAV_COMP_ID_AUTOPILOT1,
         &msg,
-        0,                  // onboard_control_sensors_present
-        0,                  // onboard_control_sensors_enabled
-        0,                  // onboard_control_sensors_health
+        sensors_present,
+        sensors_enabled,
+        sensors_health,
         0,                  // load (permille); not tracked here
         (uint16_t)voltage_mv,
         (int16_t)current_ca,
