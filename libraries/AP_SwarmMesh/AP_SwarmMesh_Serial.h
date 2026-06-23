@@ -50,6 +50,19 @@ private:
         // TODO: Add more buckets
     };
 
+    // RX message types gated by the _LOG_MASK param (bits 8-31 reserved for future message types)
+    enum class LogMsg : uint32_t {
+        HEARTBEAT                   = 1U << 0,
+        SYS_STATUS                  = 1U << 1,
+        GLOBAL_POSITION_INT         = 1U << 2,
+        LOCAL_POSITION_NED          = 1U << 3,
+        POSITION_TARGET_GLOBAL_INT  = 1U << 4,
+        EXTENDED_SYS_STATE          = 1U << 5,
+        ATTITUDE                    = 1U << 6,
+        EKF_STATUS_REPORT           = 1U << 7,
+        // TODO: Add more
+    };
+
     // RX state machine
     enum class ParseState : uint8_t {
         WAIT_SYNC1,         // waiting for 0xAD
@@ -75,6 +88,7 @@ private:
     uint8_t  _type;                             // packet type (0 == MAVLink)
     uint32_t _last_bucket_ms[AP_SwarmMesh::NUM_BUCKETS]; // last send time per bucket
     uint32_t _last_heartbeat_ms;                // last heartbeat send time (independent of bucket timing)
+    uint32_t _last_log_ms;                      // last RX dataflash log write time (global rate limit)
 
     // persistent MAVLink byte-level parser state
     mavlink_message_t _mavlink_rxmsg;
@@ -85,6 +99,9 @@ private:
 
     // called in process_packet() when type = 0 (MAVLink)
     void handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps);
+
+    // returns true (and marks the gate) if a dataflash write is currently allowed under the LOG_HZ budget
+    bool log_rate_ok();
 
     // called when parse_byte() returns true (writes peer state into frontend)
     void process_packet();

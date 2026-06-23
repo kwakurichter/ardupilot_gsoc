@@ -60,6 +60,12 @@ protected:
 
     // returns true if the Full message profile should be used (Full radio + capable FC)
     bool frontend_uses_full() const;
+
+    // returns the max combined RX dataflash log write rate (Hz). 0 disables RX logging.
+    uint16_t frontend_log_rate_hz() const;
+
+    // returns the bitmask of which RX message types are logged
+    uint32_t frontend_log_mask() const;
 };
 
 #endif  // AP_SWARMMESH_ENABLED

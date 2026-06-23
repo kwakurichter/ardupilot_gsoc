@@ -104,6 +104,21 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_HW_MASK", 8, AP_SwarmMesh, hardware_mask, 0),
 
+    // @Param: _LOG_HZ
+    // @DisplayName: RX log write rate
+    // @Description: Maximum combined rate at which RX peer telemetry is written to the dataflash log, across all peers and message types. 0 disables RX logging entirely.
+    // @Units: Hz
+    // @Range: 0 2000
+    // @User: Advanced
+    AP_GROUPINFO("_LOG_HZ", 9, AP_SwarmMesh, log_rate_hz, 50),
+
+    // @Param: _LOG_MASK
+    // @DisplayName: RX log message mask
+    // @Description: Bitmask of which RX message types are written to the dataflash log (still subject to LOG_HZ). Bits 8-31 are reserved for future message types.
+    // @Bitmask: 0:Heartbeat,1:SysStatus,2:GlobalPositionInt,3:LocalPositionNED,4:PositionTargetGlobalInt,5:ExtendedSysState,6:Attitude,7:EkfStatusReport
+    // @User: Advanced
+    AP_GROUPINFO("_LOG_MASK", 10, AP_SwarmMesh, log_mask, 0xFF),
+
     AP_GROUPEND
 };
 

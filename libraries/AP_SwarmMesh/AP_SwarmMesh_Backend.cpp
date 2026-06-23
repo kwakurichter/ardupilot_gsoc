@@ -88,4 +88,16 @@ bool AP_SwarmMesh_Backend::frontend_uses_full() const
 #endif
 }
 
+// max combined RX dataflash log write rate accessor
+uint16_t AP_SwarmMesh_Backend::frontend_log_rate_hz() const
+{
+    return MAX(0, (int16_t)_frontend.log_rate_hz);
+}
+
+// RX log message mask accessor
+uint32_t AP_SwarmMesh_Backend::frontend_log_mask() const
+{
+    return (uint32_t)(int32_t)_frontend.log_mask;
+}
+
 #endif  // AP_SWARMMESH_ENABLED

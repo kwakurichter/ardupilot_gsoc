@@ -162,6 +162,23 @@ bool AP_SwarmMesh_Serial::parse_byte(uint8_t b)
     return false;
 }
 
+// returns true (and marks the gate) if a dataflash write is currently allowed under the LOG_HZ budget.
+// This is a single global gate covering all RX message types combined, so total log volume stays bounded regardless of how many peers or message types are arriving.
+bool AP_SwarmMesh_Serial::log_rate_ok()
+{
+    const uint16_t rate_hz = frontend_log_rate_hz();
+    if (rate_hz == 0) {
+        return false;   // RX logging disabled
+    }
+    const uint32_t now_ms = AP_HAL::millis();
+    const uint32_t interval_ms = 1000U / rate_hz;
+    if (now_ms - _last_log_ms < interval_ms) {
+        return false;
+    }
+    _last_log_ms = now_ms;
+    return true;
+}
+
 // decode a fully-parsed MAVLink message, update peer state, and emit log entries
 void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps)
 {
@@ -174,15 +191,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         ps.armed_state = (hb.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
         ps.mode = (uint8_t)hb.custom_mode;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_HB pkt_swarmmesh_hb{
-        LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_HB_MSG),
-        time_us         : AP_HAL::micros64(),
-        sysid           : ps.sysid,
-        vehicle_type    : ps.vehicle_type,
-        mode            : ps.mode,
-        armed_state     : (uint8_t)ps.armed_state
-        };
-        AP::logger().WriteBlock(&pkt_swarmmesh_hb, sizeof(pkt_swarmmesh_hb));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::HEARTBEAT) && log_rate_ok()) {
+            const struct log_SwarmMesh_HB pkt_swarmmesh_hb{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_HB_MSG),
+            time_us         : AP_HAL::micros64(),
+            sysid           : ps.sysid,
+            vehicle_type    : ps.vehicle_type,
+            mode            : ps.mode,
+            armed_state     : (uint8_t)ps.armed_state
+            };
+            AP::logger().WriteBlock(&pkt_swarmmesh_hb, sizeof(pkt_swarmmesh_hb));
+        }
 #endif
         break;
     }
@@ -196,14 +215,16 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
                            & ss.onboard_control_sensors_enabled
                            & ~ss.onboard_control_sensors_health;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_SS pkt_ss{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_SS_MSG),
-            time_us     : AP_HAL::micros64(),
-            sysid       : ps.sysid,
-            bat_voltage : ps.battery_voltage,
-            failsafe    : ps.failsafe_flags
-        };
-        AP::logger().WriteBlock(&pkt_ss, sizeof(pkt_ss));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::SYS_STATUS) && log_rate_ok()) {
+            const struct log_SwarmMesh_SS pkt_ss{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_SS_MSG),
+                time_us     : AP_HAL::micros64(),
+                sysid       : ps.sysid,
+                bat_voltage : ps.battery_voltage,
+                failsafe    : ps.failsafe_flags
+            };
+            AP::logger().WriteBlock(&pkt_ss, sizeof(pkt_ss));
+        }
 #endif
         break;
     }
@@ -215,15 +236,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         ps.global_pos.y = (float)gp.lon;   // degE7
         ps.global_pos.z = (float)gp.alt;   // mm above MSL
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_GP pkt_gp{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_GP_MSG),
-            time_us : AP_HAL::micros64(),
-            sysid   : ps.sysid,
-            lat     : gp.lat,
-            lon     : gp.lon,
-            alt     : gp.alt
-        };
-        AP::logger().WriteBlock(&pkt_gp, sizeof(pkt_gp));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::GLOBAL_POSITION_INT) && log_rate_ok()) {
+            const struct log_SwarmMesh_GP pkt_gp{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_GP_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                lat     : gp.lat,
+                lon     : gp.lon,
+                alt     : gp.alt
+            };
+            AP::logger().WriteBlock(&pkt_gp, sizeof(pkt_gp));
+        }
 #endif
         break;
     }
@@ -235,15 +258,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         ps.local_pos_NED.y = lp.y;
         ps.local_pos_NED.z = lp.z;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_LP pkt_lp{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_LP_MSG),
-            time_us : AP_HAL::micros64(),
-            sysid   : ps.sysid,
-            x       : lp.x,
-            y       : lp.y,
-            z       : lp.z
-        };
-        AP::logger().WriteBlock(&pkt_lp, sizeof(pkt_lp));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::LOCAL_POSITION_NED) && log_rate_ok()) {
+            const struct log_SwarmMesh_LP pkt_lp{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_LP_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                x       : lp.x,
+                y       : lp.y,
+                z       : lp.z
+            };
+            AP::logger().WriteBlock(&pkt_lp, sizeof(pkt_lp));
+        }
 #endif
         break;
     }
@@ -255,15 +280,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         ps.target_pos.y = pt.lon_int;
         ps.target_pos.z = pt.alt;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_PT pkt_pt{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_PT_MSG),
-            time_us : AP_HAL::micros64(),
-            sysid   : ps.sysid,
-            lat     : pt.lat_int,
-            lon     : pt.lon_int,
-            alt     : pt.alt
-        };
-        AP::logger().WriteBlock(&pkt_pt, sizeof(pkt_pt));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::POSITION_TARGET_GLOBAL_INT) && log_rate_ok()) {
+            const struct log_SwarmMesh_PT pkt_pt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_PT_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                lat     : pt.lat_int,
+                lon     : pt.lon_int,
+                alt     : pt.alt
+            };
+            AP::logger().WriteBlock(&pkt_pt, sizeof(pkt_pt));
+        }
 #endif
         break;
     }
@@ -273,14 +300,16 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         mavlink_msg_extended_sys_state_decode(&msg, &es);
         ps.landed_state = es.landed_state;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_ES pkt_es{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_ES_MSG),
-            time_us        : AP_HAL::micros64(),
-            sysid          : ps.sysid,
-            landed_state   : es.landed_state
-        };
-        AP::logger().WriteBlock(&pkt_es, sizeof(pkt_es));
-#endif        
+        if ((frontend_log_mask() & (uint32_t)LogMsg::EXTENDED_SYS_STATE) && log_rate_ok()) {
+            const struct log_SwarmMesh_ES pkt_es{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_ES_MSG),
+                time_us        : AP_HAL::micros64(),
+                sysid          : ps.sysid,
+                landed_state   : es.landed_state
+            };
+            AP::logger().WriteBlock(&pkt_es, sizeof(pkt_es));
+        }
+#endif
         break;
     }
 
@@ -291,15 +320,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         ps.attitude.y = at.pitch;
         ps.attitude.z = at.yaw;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_AT pkt_at{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_AT_MSG),
-            time_us : AP_HAL::micros64(),
-            sysid   : ps.sysid,
-            pitch   : at.roll,
-            roll    : at.pitch,
-            yaw     : at.yaw
-        };
-        AP::logger().WriteBlock(&pkt_at, sizeof(pkt_at));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::ATTITUDE) && log_rate_ok()) {
+            const struct log_SwarmMesh_AT pkt_at{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_AT_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                pitch   : at.pitch,
+                roll    : at.roll,
+                yaw     : at.yaw
+            };
+            AP::logger().WriteBlock(&pkt_at, sizeof(pkt_at));
+        }
 #endif
         break;
     }
@@ -311,15 +342,17 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         ps.pos_covariance[1] = ek.pos_vert_variance;
         ps.pos_covariance[2] = ek.velocity_variance;
 #if HAL_LOGGING_ENABLED
-        const struct log_SwarmMesh_EK pkt_ek{
-            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_EK_MSG),
-            time_us       : AP_HAL::micros64(),
-            sysid         : ps.sysid,
-            pos_horiz_var : ek.pos_horiz_variance,
-            pos_vert_var  : ek.pos_vert_variance,
-            vel_var       : ek.velocity_variance
-        };
-        AP::logger().WriteBlock(&pkt_ek, sizeof(pkt_ek));
+        if ((frontend_log_mask() & (uint32_t)LogMsg::EKF_STATUS_REPORT) && log_rate_ok()) {
+            const struct log_SwarmMesh_EK pkt_ek{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_EK_MSG),
+                time_us       : AP_HAL::micros64(),
+                sysid         : ps.sysid,
+                pos_horiz_var : ek.pos_horiz_variance,
+                pos_vert_var  : ek.pos_vert_variance,
+                vel_var       : ek.velocity_variance
+            };
+            AP::logger().WriteBlock(&pkt_ek, sizeof(pkt_ek));
+        }
 #endif
         break;
     }

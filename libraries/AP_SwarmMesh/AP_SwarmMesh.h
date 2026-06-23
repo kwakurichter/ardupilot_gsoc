@@ -125,6 +125,8 @@ private:
     AP_Int8  sysid;
     AP_Int8  ttl;
     AP_Int8  hardware_mask;
+    AP_Int16 log_rate_hz;  // max combined rate (Hz) of RX dataflash log writes; 0 disables
+    AP_Int32 log_mask;     // bitmask of which RX message types are logged (see AP_SwarmMesh_Serial::LogMsg)
 
     // external references
     AP_SwarmMesh_Backend *_driver;
