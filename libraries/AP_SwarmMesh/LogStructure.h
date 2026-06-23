@@ -8,7 +8,11 @@
     LOG_SWARMMESH_HB_MSG,      \
     LOG_SWARMMESH_SS_MSG,      \
     LOG_SWARMMESH_GP_MSG,      \
-    LOG_SWARMMESH_LP_MSG
+    LOG_SWARMMESH_LP_MSG,      \
+    LOG_SWARMMESH_PT_MSG,      \
+    LOG_SWARMMESH_ES_MSG,      \
+    LOG_SWARMMESH_AT_MSG,      \
+    LOG_SWARMMESH_EK_MSG
     // TODO: Add more log types
 
 // @LoggerMessage: SMST
@@ -99,6 +103,72 @@ struct PACKED log_SwarmMesh_LP {
     float    z;
 };
 
+// @LoggerMessage: SMPT
+// @Description: SwarmMesh RX Position Target Global
+// @Field: TimeUS: Time since system startup
+// @Field: SysID: SysID of origin
+// @Field: Lat: Latitude in degE7
+// @Field: Lon: Longitude in degE7
+// @Field: Alt: Altitude AMSL in m
+
+struct PACKED log_SwarmMesh_PT {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t  sysid;
+    int32_t  lat;
+    int32_t  lon;
+    float    alt;
+};
+
+// @LoggerMessage: SMES
+// @Description: SwarmMesh RX Extended System State
+// @Field: TimeUS: Time since system startup
+// @Field: SysID: SysID of origin
+// @Field: Lat: Latitude in degE7
+// @Field: Lon: Longitude in degE7
+// @Field: Alt: Altitude above MSL in mm
+
+struct PACKED log_SwarmMesh_ES {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t  sysid;
+    uint8_t  landed_state;
+};
+
+// @LoggerMessage: SMAT
+// @Description: SwarmMesh RX Attitude
+// @Field: TimeUS: Time since system startup
+// @Field: SysID: SysID of origin
+// @Field: Pitch: Pitch angle in deg
+// @Field: Roll: Roll angle deg
+// @Field: Yaw: Yaw angle in deg
+
+struct PACKED log_SwarmMesh_AT {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t  sysid;
+    float    pitch;
+    float    roll;
+    float    yaw;
+};
+
+// @LoggerMessage: SMEK
+// @Description: SwarmMesh RX EKF Status Report
+// @Field: TimeUS: Time since system startup
+// @Field: SysID: SysID of origin
+// @Field: Pos Horiz Variance:
+// @Field: Pos Vert Variance:
+// @Field: Vel Variance:
+
+struct PACKED log_SwarmMesh_EK {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t  sysid;
+    float    pos_horiz_var;
+    float    pos_vert_var;
+    float    vel_var;
+};
+
 #if AP_SWARMMESH_ENABLED
 #define LOG_STRUCTURE_FROM_SWARMMESH \
     { LOG_SWARMMESH_MSG, sizeof(log_SwarmMesh), \
@@ -110,7 +180,15 @@ struct PACKED log_SwarmMesh_LP {
     { LOG_SWARMMESH_GP_MSG, sizeof(log_SwarmMesh_GP), \
         "SMGP", "QBLLi",  "TimeUS,SysID,Lat,Lon,Alt", "s----", "F----", true },  \
     { LOG_SWARMMESH_LP_MSG, sizeof(log_SwarmMesh_LP), \
-        "SMLP", "QBfff",  "TimeUS,SysID,x,y,z", "s-mmm", "F-000", true },  \                                 
+        "SMLP", "QBfff",  "TimeUS,SysID,x,y,z", "s-mmm", "F-000", true },  \
+    { LOG_SWARMMESH_PT_MSG, sizeof(log_SwarmMesh_PT), \
+        "SMPT", "QBLLf",  "TimeUS,SysID,Lat,Lon,Alt", "s---m", "F---0", true },  \
+    { LOG_SWARMMESH_ES_MSG, sizeof(log_SwarmMesh_ES), \
+        "SMES", "QBB",  "TimeUS,SysID,LS", "s--", "F--", true },  \
+    { LOG_SWARMMESH_AT_MSG, sizeof(log_SwarmMesh_AT), \
+        "SMAT", "QBfff",  "TimeUS,SysID,Pitch,Roll,Yaw", "s----", "F----", true },  \
+    { LOG_SWARMMESH_EK_MSG, sizeof(log_SwarmMesh_EK), \
+        "SMEK", "QBfff",  "TimeUS,SysID,PHV,PVV,VV", "s----", "F----", true },  \
 #else
 #define LOG_STRUCTURE_FROM_SWARMMESH
 #endif

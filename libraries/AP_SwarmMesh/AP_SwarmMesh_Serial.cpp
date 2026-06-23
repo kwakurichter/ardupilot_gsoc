@@ -243,6 +243,82 @@ void AP_SwarmMesh_Serial::handle_mavlink(const mavlink_message_t &msg, AP_SwarmM
         break;
     }
 
+    case MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT: {
+        mavlink_position_target_global_int_t pt;
+        mavlink_msg_position_target_global_int_decode(&msg, &pt);
+        ps.target_pos.x = pt.lat_int;
+        ps.target_pos.y = pt.lon_int;
+        ps.target_pos.z = pt.alt;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_PT pkt_pt{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_PT_MSG),
+            time_us : AP_HAL::micros64(),
+            sysid   : ps.sysid,
+            lat     : pt.lat_int,
+            lon     : pt.lon_int,
+            alt     : pt.alt
+        };
+        AP::logger().WriteBlock(&pkt_pt, sizeof(pkt_pt));
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_EXTENDED_SYS_STATE: {
+        mavlink_extended_sys_state_t es;
+        mavlink_msg_extended_sys_state_decode(&msg, &es);
+        ps.landed_state = es.landed_state;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_ES pkt_es{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_ES_MSG),
+            time_us        : AP_HAL::micros64(),
+            sysid          : ps.sysid,
+            landed_state   : es.landed_state
+        };
+        AP::logger().WriteBlock(&pkt_es, sizeof(pkt_es));
+#endif        
+        break;
+    }
+
+    case MAVLINK_MSG_ID_ATTITUDE: {
+        mavlink_attitude_t at;
+        mavlink_msg_attitude_decode(&msg, &at);
+        ps.attitude.x = at.roll;
+        ps.attitude.y = at.pitch;
+        ps.attitude.z = at.yaw;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_AT pkt_at{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_AT_MSG),
+            time_us : AP_HAL::micros64(),
+            sysid   : ps.sysid,
+            pitch   : at.roll,
+            roll    : at.pitch,
+            yaw     : at.yaw
+        };
+        AP::logger().WriteBlock(&pkt_at, sizeof(pkt_at));
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_EKF_STATUS_REPORT: {
+        mavlink_ekf_status_report_t ek;
+        mavlink_msg_ekf_status_report_decode(&msg, &ek);
+        ps.pos_covariance[0] = ek.pos_horiz_variance;
+        ps.pos_covariance[1] = ek.pos_vert_variance;
+        ps.pos_covariance[2] = ek.velocity_variance;
+#if HAL_LOGGING_ENABLED
+        const struct log_SwarmMesh_EK pkt_ek{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_EK_MSG),
+            time_us       : AP_HAL::micros64(),
+            sysid         : ps.sysid,
+            pos_horiz_var : ek.pos_horiz_variance,
+            pos_vert_var  : ek.pos_vert_variance,
+            vel_var       : ek.velocity_variance
+        };
+        AP::logger().WriteBlock(&pkt_ek, sizeof(pkt_ek));
+#endif
+        break;
+    }
+
     // TODO: Add more cases (ATTITUDE, EXTENDED_SYS_STATE, ...)
 
     default:
