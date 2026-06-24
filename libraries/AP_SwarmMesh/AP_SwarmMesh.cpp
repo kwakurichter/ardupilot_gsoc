@@ -172,6 +172,11 @@ void AP_SwarmMesh::init(void)
     case Type::None:
         break;
     }
+
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+    // restore the peer table from disk before any radio traffic arrives
+    load_peer_snapshot();
+#endif
 }
 
 // return true if swarm feature is enabled
@@ -326,6 +331,70 @@ void AP_SwarmMesh::save_peer_snapshot()
     }
 
     AP::FS().close(fd);
+}
+
+// called once from init(): restore the peer table from the on-disk snapshot, if one exists and is valid. Bails on a missing, foreign, or truncated file.
+// TODO: the save path isn't atomic, so a power loss mid-write can leave a partial file behind
+void AP_SwarmMesh::load_peer_snapshot()
+{
+    EXPECT_DELAY_MS(3000);
+    const int fd = AP::FS().open(AP_SWARMMESH_PEER_FILE, O_RDONLY);
+    if (fd == -1) {
+        // no snapshot yet (normal on inital boot)
+        return;
+    }
+
+    AP_SwarmMesh_PeerFileHeader_t hdr;
+    if (AP::FS().read(fd, &hdr, sizeof(hdr)) != (int32_t)sizeof(hdr)) {
+        AP::FS().close(fd);
+        return;
+    }
+
+    if (hdr.magic != AP_SWARMMESH_PEER_FILE_MAGIC || hdr.version != AP_SWARMMESH_PEER_FILE_VERSION || hdr.snapshot_size != sizeof(AP_SwarmMesh_PeerSnapshot_t)) {
+        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "SwarmMesh: ignoring incompatible peer snapshot");
+        AP::FS().close(fd);
+        return;
+    }
+
+    const uint16_t snapshot_count = MIN(hdr.snapshot_count, (uint16_t)AP_SWARMMESH_MAX_PEERS);
+    uint16_t restored = 0;
+
+    for (uint16_t i = 0; i < snapshot_count; i++) {
+        AP_SwarmMesh_PeerSnapshot_t rec;
+        if (AP::FS().read(fd, &rec, sizeof(rec)) != (int32_t)sizeof(rec)) {
+            // short/truncated read - stop here, keep whatever was already restored
+            break;
+        }
+
+        PeerState *ps = find_or_alloc_peer(rec.sysid);
+        if (ps == nullptr) {
+            continue;
+        }
+
+        // freshness, last_heard, last_seq, seq_seen_mask, rssi, rx_count, drop_count, prev_id, *_covariance and health_flags are deliberately left at zero. 
+        // freshness must stay false until a real packet confirms this peer again.
+        ps->vehicle_type    = rec.vehicle_type;
+        ps->mode            = rec.mode;
+        ps->armed_state     = (rec.armed_state != 0);
+        ps->landed_state    = rec.landed_state;
+        ps->failsafe_flags  = rec.failsafe_flags;
+        ps->battery_voltage = rec.battery_voltage;
+        ps->local_pos_NED   = Vector3f(rec.local_pos_NED[0], rec.local_pos_NED[1], rec.local_pos_NED[2]);
+        ps->global_pos      = Vector3f(rec.global_pos[0], rec.global_pos[1], rec.global_pos[2]);
+        ps->attitude        = Vector3f(rec.attitude[0], rec.attitude[1], rec.attitude[2]);
+        ps->role            = rec.role;
+        ps->task_id         = rec.task_id;
+        ps->formation_slot  = rec.formation_slot;
+        ps->target_pos      = Vector3f(rec.target_pos[0], rec.target_pos[1], rec.target_pos[2]);
+        ps->priority        = rec.priority;
+        restored++;
+    }
+
+    AP::FS().close(fd);
+
+    if (restored > 0) {
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "SwarmMesh: restored %u peer(s) from snapshot", (unsigned)restored);
+    }
 }
 #endif  // AP_FILESYSTEM_FILE_WRITING_ENABLED
 

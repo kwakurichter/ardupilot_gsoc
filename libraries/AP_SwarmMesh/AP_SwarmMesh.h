@@ -119,6 +119,9 @@ private:
 #if AP_FILESYSTEM_FILE_WRITING_ENABLED
     // periodically rewrite the on-disk peer-table snapshot (filled + fresh entries only)
     void save_peer_snapshot();
+
+    // called once from init(): restore the peer table from the on-disk snapshot, if one exists and is valid. Restored peers always start with freshness == false.
+    void load_peer_snapshot();
 #endif
 
     static AP_SwarmMesh *_singleton;
