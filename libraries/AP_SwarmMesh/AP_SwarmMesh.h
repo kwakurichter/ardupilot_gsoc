@@ -20,6 +20,7 @@
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
 #include <AP_Math/AP_Math.h>
+#include <AP_Filesystem/AP_Filesystem_config.h>
 
 class AP_SwarmMesh_Backend;
 
@@ -115,6 +116,11 @@ private:
     // returns nullptr if the table is full and the peer is not already present.
     PeerState *find_or_alloc_peer(uint8_t peer_sysid);
 
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+    // periodically rewrite the on-disk peer-table snapshot (filled + fresh entries only)
+    void save_peer_snapshot();
+#endif
+
     static AP_SwarmMesh *_singleton;
 
     // parameters
@@ -127,6 +133,9 @@ private:
     AP_Int8  hardware_mask;
     AP_Int16 log_rate_hz;  // max combined rate (Hz) of RX dataflash log writes; 0 disables
     AP_Int32 log_mask;     // bitmask of which RX message types are logged (see AP_SwarmMesh_Serial::LogMsg)
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+    AP_Int8  save_rate_hz; // rate (Hz) at which the on-disk peer snapshot is rewritten; 0 disables
+#endif
 
     // external references
     AP_SwarmMesh_Backend *_driver;
@@ -134,6 +143,12 @@ private:
     // individual peer data
     uint8_t num_peers = 0;
     PeerState peer_state[AP_SWARMMESH_MAX_PEERS];
+
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+    uint32_t _last_save_ms;     // last time the peer snapshot was written
+    bool     _save_dir_checked; // true once we've attempted to create AP_SWARMMESH_PEER_DIR
+    bool     _save_dir_ok;      // true if the directory exists/was created successfully
+#endif
 };
 
 namespace AP {

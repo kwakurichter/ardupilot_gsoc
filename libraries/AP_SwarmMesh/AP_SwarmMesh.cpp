@@ -29,6 +29,12 @@
 
 #include <AP_Logger/AP_Logger.h>
 
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+#include "AP_SwarmMesh_PeerStorage.h"
+#include <AP_Filesystem/AP_Filesystem.h>
+#include <GCS_MAVLink/GCS.h>
+#endif
+
 extern const AP_HAL::HAL &hal;
 
 // table of user settable parameters
@@ -119,6 +125,16 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_LOG_MASK", 10, AP_SwarmMesh, log_mask, 0xFF),
 
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+    // @Param: _SAVE_HZ
+    // @DisplayName: Peer snapshot save rate
+    // @Description: Rate at which the current peer table (filled and fresh entries only) is rewritten to APM/PEERS/peers.dat on the SD card, so it can be reloaded after a reset. 0 disables.
+    // @Units: Hz
+    // @Range: 0 10
+    // @User: Advanced
+    AP_GROUPINFO("_SAVE_HZ", 11, AP_SwarmMesh, save_rate_hz, 1),
+#endif
+
     AP_GROUPEND
 };
 
@@ -180,6 +196,18 @@ void AP_SwarmMesh::update(void)
         return;
     }
     _driver->update();
+
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+    const uint8_t rate_hz = MAX(0, (int8_t)save_rate_hz);
+    if (rate_hz != 0) {
+        const uint32_t now_ms = AP_HAL::millis();
+        const uint32_t interval_ms = 1000U / ((rate_hz <= 10) ? rate_hz : 10);  // Max snapshot rate 10Hz
+        if (now_ms - _last_save_ms >= interval_ms) {
+            _last_save_ms = now_ms;
+            save_peer_snapshot();
+        }
+    }
+#endif
 }
 
 // return the number of peers
@@ -227,6 +255,79 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
     ps.sysid = peer_sysid;
     return &ps;
 }
+
+// periodically rewrite the on-disk peer-table snapshot (filled and fresh entries only).
+#if AP_FILESYSTEM_FILE_WRITING_ENABLED
+void AP_SwarmMesh::save_peer_snapshot()
+{
+    if (!_save_dir_checked) {
+        _save_dir_checked = true;
+        EXPECT_DELAY_MS(3000);
+        struct stat st;
+        int ret = AP::FS().stat(AP_SWARMMESH_PEER_DIR, &st);
+        if (ret == -1) {
+            ret = AP::FS().mkdir(AP_SWARMMESH_PEER_DIR);
+        }
+        _save_dir_ok = (ret == 0) || (ret == -1 && errno == EEXIST);
+        if (!_save_dir_ok) {
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "SwarmMesh: failed to create %s", AP_SWARMMESH_PEER_DIR);
+        }
+    }
+    if (!_save_dir_ok) {
+        return;
+    }
+
+    // count eligible (filled + fresh) peers first, since the header needs the count up front and we don't want to buffer all peers on the stack
+    uint16_t eligible = 0;
+    for (uint8_t i = 0; i < num_peers; i++) {
+        if (peer_state[i].freshness) {
+            eligible++;
+        }
+    }
+
+    EXPECT_DELAY_MS(3000);
+    const int fd = AP::FS().open(AP_SWARMMESH_PEER_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd == -1) {
+        return;
+    }
+
+    const AP_SwarmMesh_PeerFileHeader_t hdr{
+        magic          : AP_SWARMMESH_PEER_FILE_MAGIC,
+        version        : AP_SWARMMESH_PEER_FILE_VERSION,
+        snapshot_size  : sizeof(AP_SwarmMesh_PeerSnapshot_t),
+        snapshot_count : eligible,
+        saved_time_us  : AP_HAL::micros64()
+    };
+    AP::FS().write(fd, &hdr, sizeof(hdr));
+
+    for (uint8_t i = 0; i < num_peers; i++) {
+        const PeerState &ps = peer_state[i];
+        if (!ps.freshness) {
+            continue;
+        }
+        const AP_SwarmMesh_PeerSnapshot_t rec{
+            sysid           : ps.sysid,
+            vehicle_type    : ps.vehicle_type,
+            mode            : ps.mode,
+            armed_state     : (uint8_t)ps.armed_state,
+            landed_state    : ps.landed_state,
+            failsafe_flags  : ps.failsafe_flags,
+            battery_voltage : ps.battery_voltage,
+            local_pos_NED   : { ps.local_pos_NED.x, ps.local_pos_NED.y, ps.local_pos_NED.z },
+            global_pos      : { ps.global_pos.x, ps.global_pos.y, ps.global_pos.z },
+            attitude        : { ps.attitude.x, ps.attitude.y, ps.attitude.z },
+            role            : ps.role,
+            task_id         : ps.task_id,
+            formation_slot  : ps.formation_slot,
+            target_pos      : { ps.target_pos.x, ps.target_pos.y, ps.target_pos.z },
+            priority        : ps.priority
+        };
+        AP::FS().write(fd, &rec, sizeof(rec));
+    }
+
+    AP::FS().close(fd);
+}
+#endif  // AP_FILESYSTEM_FILE_WRITING_ENABLED
 
 #if HAL_LOGGING_ENABLED
 void AP_SwarmMesh::log()
