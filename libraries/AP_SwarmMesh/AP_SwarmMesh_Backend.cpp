@@ -61,6 +61,21 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peerstate(uint8_t peer_s
     return _frontend.find_or_alloc_peer(peer_sysid);
 }
 
+// number of known peers in the frontend table
+uint8_t AP_SwarmMesh_Backend::frontend_peer_count() const
+{
+    return _frontend.num_peers;
+}
+
+// peer entry at the given index, or nullptr if out of range
+AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peer_at(uint8_t index)
+{
+    if (index >= _frontend.num_peers) {
+        return nullptr;
+    }
+    return &_frontend.peer_state[index];
+}
+
 // returns the SR stream rate (Hz) for a given bucket. 0 if the index is out of range or param is zero.
 uint8_t AP_SwarmMesh_Backend::frontend_sr_rate(uint8_t bucket) const
 {

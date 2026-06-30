@@ -66,6 +66,17 @@ void AP_SwarmMesh_Serial::update(void)
         }
     }
 
+    // Freshness check
+    static constexpr uint64_t FRESHNESS_BUDGET_US = 1000ULL * 1000U; // 1s
+    const uint64_t now_us = AP_HAL::micros64();
+    for (uint8_t i = 0; i < frontend_peer_count(); i++) {
+        AP_SwarmMesh::PeerState *ps = frontend_peer_at(i);
+        if (ps == nullptr) {
+            continue;
+        }
+        ps->freshness = (now_us - ps->last_heard) <= FRESHNESS_BUDGET_US;
+    }
+
     // TX send path
     const uint32_t now_ms = AP_HAL::millis();
 
@@ -132,9 +143,6 @@ bool AP_SwarmMesh_Serial::parse_byte(uint8_t b)
             if (_crc != hdr->crc) {
                 // header CRC mismatch — discard and resync
                 _crc_fail++;
-                _state = ParseState::WAIT_SYNC1;
-            } else if (_payload_len > SWARMMESH_MAX_PAYLOAD) {
-                // payload length out of range — discard
                 _state = ParseState::WAIT_SYNC1;
             } else if (_payload_len == 0) {
                 // no payload — packet is complete
@@ -386,11 +394,6 @@ void AP_SwarmMesh_Serial::process_packet()
         _dropped++;
         return;
     }
-
-    // Freshness: per-peer, based on time since we last heard from THIS peer
-    static constexpr uint64_t FRESHNESS_BUDGET_US = 1000ULL * 1000U; // 1s
-    const uint64_t now_us = AP_HAL::micros64();
-    ps->freshness = (now_us - ps->last_heard) <= FRESHNESS_BUDGET_US;
 
     if (ps->seq_seen_mask == 0) {
         // first packet ever from this peer: always accept, initialise window

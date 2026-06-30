@@ -135,6 +135,14 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     AP_GROUPINFO("_SAVE_HZ", 11, AP_SwarmMesh, save_rate_hz, 1),
 #endif
 
+    // @Param: _PRUNE_TIMEOUT
+    // @DisplayName: Peer table prune timeout
+    // @Description: How often the peer table is checked for stale (non-fresh) entries, which are then deleted to free up space for new peers. 0 disables pruning.
+    // @Units: s
+    // @Range: 0 60
+    // @User: Advanced
+    AP_GROUPINFO("_PRUNE_TIMEOUT", 12, AP_SwarmMesh, prune_timeout, 10),
+
     AP_GROUPEND
 };
 
@@ -213,6 +221,17 @@ void AP_SwarmMesh::update(void)
         }
     }
 #endif
+
+    // Delete expired peer table entries
+    const uint8_t prune_s = MAX(0, (int8_t)prune_timeout);
+    if (prune_s != 0) {
+        const uint32_t now_ms = AP_HAL::millis();
+        const uint32_t interval_ms = 1000U * ((prune_s <= 60) ? prune_s : 60);  // Max timeout 60s
+        if (now_ms - _last_check_ms >= interval_ms) {
+            _last_check_ms = now_ms;
+            prune_peer_table();
+        }
+    }
 }
 
 // return the number of peers
@@ -397,6 +416,22 @@ void AP_SwarmMesh::load_peer_snapshot()
     }
 }
 #endif  // AP_FILESYSTEM_FILE_WRITING_ENABLED
+
+// delete stale peer table entries and compacts the table so the live entries stay contiguous in [0, num_peers)
+void AP_SwarmMesh::prune_peer_table()
+{
+    uint8_t write = 0;
+    for (uint8_t read = 0; read < num_peers; read++) {
+        if (!peer_state[read].freshness) {
+            continue;  // drop this entry
+        }
+        if (write != read) {
+            peer_state[write] = peer_state[read];
+        }
+        write++;
+    }
+    num_peers = write;
+}
 
 #if HAL_LOGGING_ENABLED
 void AP_SwarmMesh::log()

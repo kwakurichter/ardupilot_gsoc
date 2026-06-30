@@ -124,6 +124,9 @@ private:
     void load_peer_snapshot();
 #endif
 
+    // periodically deletes stale peer table entries
+    void prune_peer_table();
+
     static AP_SwarmMesh *_singleton;
 
     // parameters
@@ -139,6 +142,7 @@ private:
 #if AP_FILESYSTEM_FILE_WRITING_ENABLED
     AP_Int8  save_rate_hz; // rate (Hz) at which the on-disk peer snapshot is rewritten; 0 disables
 #endif
+    AP_Int8  prune_timeout;
 
     // external references
     AP_SwarmMesh_Backend *_driver;
@@ -152,6 +156,7 @@ private:
     bool     _save_dir_checked; // true once we've attempted to create AP_SWARMMESH_PEER_DIR
     bool     _save_dir_ok;      // true if the directory exists/was created successfully
 #endif
+    uint32_t _last_check_ms;    // last time the peer table was checked for pruning
 };
 
 namespace AP {

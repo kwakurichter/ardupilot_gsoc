@@ -55,6 +55,12 @@ protected:
     // find or alloc a peer entry in the frontend table by sysid (returns nullptr if table is full)
     AP_SwarmMesh::PeerState *frontend_peerstate(uint8_t peer_sysid);
 
+    // returns the number of known peers in the frontend table
+    uint8_t frontend_peer_count() const;
+
+    // returns a pointer to the peer entry at the given index, or nullptr if index is out of range
+    AP_SwarmMesh::PeerState *frontend_peer_at(uint8_t index);
+
     // returns the stream rate (Hz) for the given bucket index. 0 if disabled.
     uint8_t frontend_sr_rate(uint8_t bucket) const;
 
