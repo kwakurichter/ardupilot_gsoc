@@ -190,7 +190,7 @@ struct PACKED log_SwarmMesh_EK {
     { LOG_SWARMMESH_AT_MSG, sizeof(log_SwarmMesh_AT), \
         "SMAT", "QBfff",  "TimeUS,SysID,Pitch,Roll,Yaw", "s----", "F----", true },  \
     { LOG_SWARMMESH_EK_MSG, sizeof(log_SwarmMesh_EK), \
-        "SMEK", "QBfff",  "TimeUS,SysID,PHV,PVV,VV", "s----", "F----", true },  \
+        "SMEK", "QBfff",  "TimeUS,SysID,PHV,PVV,VV", "s----", "F----", true },
 #else
 #define LOG_STRUCTURE_FROM_SWARMMESH
 #endif

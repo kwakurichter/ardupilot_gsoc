@@ -47,29 +47,29 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO_FLAGS("_TYPE", 0, AP_SwarmMesh, _type, 0, AP_PARAM_FLAG_ENABLE),
 
-    // @Param: SR_POSITION
+    // @Param: _SR_POSITION
     // @DisplayName: Position stream rate
     // @Description: Rate at which GLOBAL_POSITION_INT and LOCAL_POSITION_NED are broadcast (Hz). 0 disables.
     // @Units: Hz
     // @Range: 0 50
     // @User: Advanced
-    AP_GROUPINFO("SR_POSITION", 1, AP_SwarmMesh, stream_rate[0], 0),
+    AP_GROUPINFO("_SR_POSITION", 1, AP_SwarmMesh, stream_rate[0], 0),
 
-    // @Param: SR_EXT_STAT
+    // @Param: _SR_EXT_STAT
     // @DisplayName: Extended status stream rate
     // @Description: Rate at which SYS_STATUS, NAV_CONTROLLER_OUTPUT, POSITION_TARGET_GLOBAL_INT and MISSION_CURRENT are broadcast (Hz). 0 disables.
     // @Units: Hz
     // @Range: 0 50
     // @User: Advanced
-    AP_GROUPINFO("SR_EXT_STAT", 2, AP_SwarmMesh, stream_rate[1], 0),
+    AP_GROUPINFO("_SR_EXT_STAT", 2, AP_SwarmMesh, stream_rate[1], 0),
 
-    // @Param: SR_EXTRA1
+    // @Param: _SR_EXTRA1
     // @DisplayName: Extra 1 stream rate
     // @Description: Rate at which ATTITUDE and EKF_STATUS_REPORT are broadcast (Hz). 0 disables.
     // @Units: Hz
     // @Range: 0 50
     // @User: Advanced
-    AP_GROUPINFO("SR_EXTRA1", 3, AP_SwarmMesh, stream_rate[2], 0),
+    AP_GROUPINFO("_SR_EXTRA1", 3, AP_SwarmMesh, stream_rate[2], 0),
 
     // @Param: _SWARM_SIZE
     // @DisplayName: Swarm size

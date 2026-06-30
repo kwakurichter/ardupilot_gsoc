@@ -49,5 +49,6 @@ static_assert(sizeof(p2p_header_t) == 23, "p2p header must be exactly 23 bytes")
 #define SWARMMESH_HEADER_SIZE    (sizeof(p2p_header_t))
 #define SWARMMESH_MAX_PAYLOAD    255
 #define SWARMMESH_MSG_BUF_MAX    (sizeof(p2p_header_t) + SWARMMESH_MAX_PAYLOAD)
+#define SWARMMESH_BROADCAST      0
 
 #endif   // AP_SWARMMESH_ENABLED

@@ -291,7 +291,8 @@ void AP_SwarmMesh_Backend::process_packet()
         return;
     }
 
-    if (hdr->dest_id != frontend_sysid()) {
+    const bool is_broadcast = (hdr->dest_id == SWARMMESH_BROADCAST);    // dest_id=0 is broadcast: deliver locally to every peer without forwarding
+    if (!is_broadcast && hdr->dest_id != frontend_sysid()) {
         forward_mavlink(hdr->origin_id, hdr->dest_id,
                         &_msgbuf[SWARMMESH_HEADER_SIZE],
                         hdr->deadline_ms, hdr->ttl,
