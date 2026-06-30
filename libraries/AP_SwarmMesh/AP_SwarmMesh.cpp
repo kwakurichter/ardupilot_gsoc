@@ -91,7 +91,7 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @DisplayName: System ID
     // @Description: Unique system ID of this drone
     // @Increment: 1
-    // @Range: 0 16
+    // @Range: 0 255
     // @User: Advanced
     AP_GROUPINFO("_SYSID", 6, AP_SwarmMesh, sysid, 0),
 
@@ -142,6 +142,28 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     // @Range: 0 60
     // @User: Advanced
     AP_GROUPINFO("_PRUNE_SECS", 12, AP_SwarmMesh, prune_timeout, 10),
+
+    // @Param: _PEER_01
+    // @DisplayName: Neighbourhood peer 1
+    // @Description: SysID of a peer to track. When any _PEER_* slot is non-zero only peers matching a listed SysID are tracked. 0 disables this slot. All slots zero (default) accepts any peer.
+    // @Range: 0 255
+    // @User: Advanced
+    AP_GROUPINFO("_PEER_01", 13, AP_SwarmMesh, peer_filter[0],  0),
+    AP_GROUPINFO("_PEER_02", 14, AP_SwarmMesh, peer_filter[1],  0),
+    AP_GROUPINFO("_PEER_03", 15, AP_SwarmMesh, peer_filter[2],  0),
+    AP_GROUPINFO("_PEER_04", 16, AP_SwarmMesh, peer_filter[3],  0),
+    AP_GROUPINFO("_PEER_05", 17, AP_SwarmMesh, peer_filter[4],  0),
+    AP_GROUPINFO("_PEER_06", 18, AP_SwarmMesh, peer_filter[5],  0),
+    AP_GROUPINFO("_PEER_07", 19, AP_SwarmMesh, peer_filter[6],  0),
+    AP_GROUPINFO("_PEER_08", 20, AP_SwarmMesh, peer_filter[7],  0),
+    AP_GROUPINFO("_PEER_09", 21, AP_SwarmMesh, peer_filter[8],  0),
+    AP_GROUPINFO("_PEER_10", 22, AP_SwarmMesh, peer_filter[9],  0),
+    AP_GROUPINFO("_PEER_11", 23, AP_SwarmMesh, peer_filter[10], 0),
+    AP_GROUPINFO("_PEER_12", 24, AP_SwarmMesh, peer_filter[11], 0),
+    AP_GROUPINFO("_PEER_13", 25, AP_SwarmMesh, peer_filter[12], 0),
+    AP_GROUPINFO("_PEER_14", 26, AP_SwarmMesh, peer_filter[13], 0),
+    AP_GROUPINFO("_PEER_15", 27, AP_SwarmMesh, peer_filter[14], 0),
+    AP_GROUPINFO("_PEER_16", 28, AP_SwarmMesh, peer_filter[15], 0),
 
     AP_GROUPEND
 };
@@ -259,8 +281,26 @@ bool AP_SwarmMesh::device_ready(void) const
     return ((_driver != nullptr) && (_type != Type::None));
 }
 
+// returns true if sysid is permitted by the neighbourhood filter. when all slots are 0 (default), every sysid is allowed.
+bool AP_SwarmMesh::peer_is_allowed(uint8_t peer_sysid) const
+{
+    bool any_set = false;
+    for (uint8_t i = 0; i < AP_SWARMMESH_MAX_PEERS; i++) {
+        const uint8_t f = (uint8_t)peer_filter[i];
+        if (f == 0) {
+            continue;
+        }
+        any_set = true;
+        if (f == peer_sysid) {
+            return true;
+        }
+    }
+    return !any_set;
+}
+
 // find an existing peer entry by sysid, or allocate a new zeroed entry.
-// returns nullptr if the table is full and the peer is not already present.
+// returns nullptr if the table is full, the peer is not already present,
+// or the peer is excluded by the neighbourhood filter.
 AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
 {
     // respect swarm_size if set, otherwise fall back to compile-time max
@@ -270,6 +310,9 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
         if (peer_state[i].sysid == peer_sysid) {
             return &peer_state[i];
         }
+    }
+    if (!peer_is_allowed(peer_sysid)) {
+        return nullptr;
     }
     if (num_peers >= limit) {
         return nullptr;
