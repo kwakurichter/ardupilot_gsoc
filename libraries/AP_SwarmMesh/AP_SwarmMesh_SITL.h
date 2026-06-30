@@ -19,24 +19,28 @@
 
 #if AP_SWARMMESH_SITL_ENABLED
 
-#include <SITL/SITL.h>
+#include <AP_HAL/utility/Socket_native.h>
 
 class AP_SwarmMesh_SITL : public AP_SwarmMesh_Backend
 {
-
 public:
-    // constructor
     AP_SwarmMesh_SITL(AP_SwarmMesh &frontend);
 
-    // return true if radio is basically healthy (we are receiving data)
-    bool healthy() override;
-
-    // update
-    void update() override;
+protected:
+    bool     transport_ready() const override;
+    uint32_t transport_available() override;
+    int16_t  transport_read() override;
+    uint32_t transport_txspace() override;
+    void     transport_write(const uint8_t *buf, uint16_t len) override;
 
 private:
-    SITL::SIM *sitl;
-    uint32_t last_update_ms;
+    SocketAPM_native _sock{true};   // true = datagram (UDP)
+    bool     _sock_ok = false;
+
+    // datagram receive buffer: holds one complete SwarmMesh packet at a time
+    uint8_t  _rx_buf[SWARMMESH_MSG_BUF_MAX];
+    uint16_t _rx_buf_len = 0;
+    uint16_t _rx_buf_pos = 0;
 };
 
-#endif // AP_SWARMMESH_SITL_ENABLED
+#endif  // AP_SWARMMESH_SITL_ENABLED

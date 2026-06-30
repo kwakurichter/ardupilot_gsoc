@@ -174,3 +174,6 @@ env.bak/
 venv.bak/
 autotest_result_*_junit.xml
 .python-version
+
+# local dev notes, not for commit
+libraries/AP_SwarmMesh/dev_notes_*.md

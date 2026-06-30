@@ -40,4 +40,14 @@ typedef struct {
 
 static_assert(sizeof(p2p_header_t) == 23, "p2p header must be exactly 23 bytes");
 
+#define SWARMMESH_SYNC1          0xAD
+#define SWARMMESH_SYNC2          0xBC
+#define SWARMMESH_VERSION_01     0x01
+#define SWARMMESH_TYPE_MAVLINK   0x00
+#define SWARMMESH_NORMAL         0x00
+#define SWARMMESH_NO_RTC         0x01
+#define SWARMMESH_HEADER_SIZE    (sizeof(p2p_header_t))
+#define SWARMMESH_MAX_PAYLOAD    255
+#define SWARMMESH_MSG_BUF_MAX    (sizeof(p2p_header_t) + SWARMMESH_MAX_PAYLOAD)
+
 #endif   // AP_SWARMMESH_ENABLED

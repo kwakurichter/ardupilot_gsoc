@@ -19,25 +19,54 @@
 
 #include <AP_HAL/AP_HAL.h>
 
-extern const AP_HAL::HAL& hal;
+// multicast group shared by all SITL swarm instances
+#define SWARMMESH_MCAST_ADDRESS "239.65.83.0"
+#define SWARMMESH_MCAST_PORT    57733U
 
-// constructor
 AP_SwarmMesh_SITL::AP_SwarmMesh_SITL(AP_SwarmMesh &frontend) :
     AP_SwarmMesh_Backend(frontend),
-    sitl(AP::sitl())
+    _sock(true)
 {
+    _sock_ok = _sock.connect(SWARMMESH_MCAST_ADDRESS, SWARMMESH_MCAST_PORT);
 }
 
-// return true if we have received a packet recently
-bool AP_SwarmMesh_SITL::healthy()
-{
-    return (AP_HAL::millis() - last_update_ms) < 3000;
+bool AP_SwarmMesh_SITL::transport_ready() const 
+{ 
+    return _sock_ok; 
 }
 
-// update: placeholder — will simulate peer packets in a future step
-void AP_SwarmMesh_SITL::update(void)
-{
-    last_update_ms = AP_HAL::millis();
+uint32_t AP_SwarmMesh_SITL::transport_txspace() 
+{ 
+    return 0xFFFFU; 
 }
 
-#endif // AP_SWARMMESH_SITL_ENABLED
+// bridge UDP datagram recv into a byte-stream buffer that parse_byte() drains one byte at a time
+uint32_t AP_SwarmMesh_SITL::transport_available()
+{
+    if (_rx_buf_pos < _rx_buf_len) {
+        return _rx_buf_len - _rx_buf_pos;
+    }
+    // buffer exhausted, try to pull the next datagram (non-blocking)
+    const ssize_t n = _sock.recv(_rx_buf, sizeof(_rx_buf), 0);
+    if (n <= 0) {
+        return 0;
+    }
+    _rx_buf_len = (uint16_t)n;
+    _rx_buf_pos = 0;
+    return _rx_buf_len;
+}
+
+int16_t AP_SwarmMesh_SITL::transport_read()
+{
+    if (_rx_buf_pos >= _rx_buf_len) {
+        return -1;
+    }
+    return _rx_buf[_rx_buf_pos++];
+}
+
+void AP_SwarmMesh_SITL::transport_write(const uint8_t *buf, uint16_t len)
+{
+    _sock.send(buf, len);
+}
+
+#endif  // AP_SWARMMESH_SITL_ENABLED

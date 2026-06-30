@@ -17,57 +17,53 @@
 
 #if AP_SWARMMESH_ENABLED
 
-// debug
-#include <stdio.h>
-#include <AP_SerialManager/AP_SerialManager.h>
+#include <AP_HAL/AP_HAL.h>
+#include <AP_RTC/AP_RTC.h>
+#include <AP_Logger/AP_Logger.h>
+#include <AP_AHRS/AP_AHRS.h>
+#include <AP_Common/AP_Common.h>
+#include <AP_BattMonitor/AP_BattMonitor_config.h>
+#if AP_BATTERY_ENABLED
+#include <AP_BattMonitor/AP_BattMonitor.h>
+#endif
+#include <AP_Vehicle/AP_Vehicle.h>
 
-/*
-  base class constructor. 
-  This incorporates initialisation as well.
-*/
+#include "LogStructure.h"
+
+extern const AP_HAL::HAL& hal;
+
 AP_SwarmMesh_Backend::AP_SwarmMesh_Backend(AP_SwarmMesh &frontend) :
     _frontend(frontend)
 {
-    const AP_SerialManager &serialmanager = AP::serialmanager();
-    uart = serialmanager.find_serial(AP_SerialManager::SerialProtocol_SwarmMesh, 0);
-    if (uart == nullptr) {
-        return;
-    }
-
-    uart->begin(serialmanager.find_baudrate(AP_SerialManager::SerialProtocol_SwarmMesh, 0));
 }
 
-// sysid accessor
+// ---- frontend accessors ----
+
 uint8_t AP_SwarmMesh_Backend::frontend_sysid() const
 {
     return (uint8_t)_frontend.sysid;
 }
 
-// destination_id accessor
 uint8_t AP_SwarmMesh_Backend::frontend_dest_id() const
 {
     return (uint8_t)_frontend.destination_id;
 }
 
-// ttl accessor
 uint8_t AP_SwarmMesh_Backend::frontend_ttl() const
 {
     return (uint8_t)_frontend.ttl;
 }
 
-// find or alloc a peer entry in the frontend table by sysid
 AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peerstate(uint8_t peer_sysid)
 {
     return _frontend.find_or_alloc_peer(peer_sysid);
 }
 
-// number of known peers in the frontend table
 uint8_t AP_SwarmMesh_Backend::frontend_peer_count() const
 {
     return _frontend.num_peers;
 }
 
-// peer entry at the given index, or nullptr if out of range
 AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peer_at(uint8_t index)
 {
     if (index >= _frontend.num_peers) {
@@ -76,7 +72,6 @@ AP_SwarmMesh::PeerState *AP_SwarmMesh_Backend::frontend_peer_at(uint8_t index)
     return &_frontend.peer_state[index];
 }
 
-// returns the SR stream rate (Hz) for a given bucket. 0 if the index is out of range or param is zero.
 uint8_t AP_SwarmMesh_Backend::frontend_sr_rate(uint8_t bucket) const
 {
     if (bucket >= AP_SwarmMesh::NUM_BUCKETS) {
@@ -85,34 +80,870 @@ uint8_t AP_SwarmMesh_Backend::frontend_sr_rate(uint8_t bucket) const
     return MAX(0, (int8_t)_frontend.stream_rate[bucket]);
 }
 
-// Returns true if the Full message profile should be used.
-// Bit 0 of stream means a Full-capable radio is fitted.
-// Even with a Full radio, STM32F4 FCs are downgraded to Lite at compile time.
 bool AP_SwarmMesh_Backend::frontend_uses_full() const
 {
     const uint8_t hw = (uint8_t)_frontend.hardware_mask;
     if (!(hw & 0x01)) {
-        // Lite radio hardware — always Lite
         return false;
     }
 #if defined(STM32F4)
-    // Full radio fitted but F4 CPU cannot sustain the Full message set
     return false;
 #else
     return true;
 #endif
 }
 
-// max combined RX dataflash log write rate accessor
 uint16_t AP_SwarmMesh_Backend::frontend_log_rate_hz() const
 {
     return MAX(0, (int16_t)_frontend.log_rate_hz);
 }
 
-// RX log message mask accessor
 uint32_t AP_SwarmMesh_Backend::frontend_log_mask() const
 {
     return (uint32_t)(int32_t)_frontend.log_mask;
 }
+
+// ---- healthy / update ----
+
+bool AP_SwarmMesh_Backend::healthy()
+{
+    return (AP_HAL::millis() - _last_rx_ms) < AP_SWARMMESH_TIMEOUT_MS;
+}
+
+void AP_SwarmMesh_Backend::update()
+{
+    if (!transport_ready()) {
+        return;
+    }
+
+    // drain available RX bytes through the parser
+    uint32_t nbytes = MIN(transport_available(), 1024U);
+    while (nbytes-- > 0) {
+        const int16_t b = transport_read();
+        if (b >= 0 && parse_byte((uint8_t)b)) {
+            process_packet();
+        }
+    }
+
+    // get freshness for every known peer on every tick
+    static constexpr uint64_t FRESHNESS_BUDGET_US = 1000ULL * 1000U; // 1s
+    const uint64_t now_us = AP_HAL::micros64();
+    for (uint8_t i = 0; i < frontend_peer_count(); i++) {
+        AP_SwarmMesh::PeerState *ps = frontend_peer_at(i);
+        if (ps == nullptr) {
+            continue;
+        }
+        ps->freshness = (now_us - ps->last_heard) <= FRESHNESS_BUDGET_US;
+    }
+
+    // TX send path
+    const uint32_t now_ms = AP_HAL::millis();
+
+    static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000U;
+    if (now_ms - _last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
+        _last_heartbeat_ms = now_ms;
+        send_heartbeat();
+    }
+
+    const uint32_t hw_min_interval_ms = frontend_uses_full() ? (1000U / AP_SWARMMESH_FULL_HZ) : (1000U / AP_SWARMMESH_LITE_HZ);
+
+    for (uint8_t i = 0; i < AP_SwarmMesh::NUM_BUCKETS; i++) {
+        const uint8_t rate_hz = frontend_sr_rate(i);
+        if (rate_hz == 0) {
+            continue;
+        }
+        const uint32_t interval_ms = MAX(1000U / (uint32_t)rate_hz, hw_min_interval_ms);
+        if (now_ms - _last_bucket_ms[i] < interval_ms) {
+            continue;
+        }
+        _last_bucket_ms[i] = now_ms;
+        send_stream(static_cast<Bucket>(i));
+    }
+}
+
+// ---- parser ----
+
+bool AP_SwarmMesh_Backend::parse_byte(uint8_t b)
+{
+    switch (_state) {
+
+    case ParseState::WAIT_SYNC1:
+        if (b == SWARMMESH_SYNC1) {
+            _msgbuf[0] = b;
+            _msg_len = 1;
+            _crc = b;
+            _state = ParseState::WAIT_SYNC2;
+        }
+        break;
+
+    case ParseState::WAIT_SYNC2:
+        if (b == SWARMMESH_SYNC2) {
+            _msgbuf[1] = b;
+            _msg_len = 2;
+            _crc += b;
+            _state = ParseState::HEADER;
+        } else {
+            _state = ParseState::WAIT_SYNC1;
+        }
+        break;
+
+    case ParseState::HEADER:
+        if (_msg_len < SWARMMESH_HEADER_SIZE - 1) {
+            _crc += b;
+        }
+        _msgbuf[_msg_len++] = b;
+        if (_msg_len == SWARMMESH_HEADER_SIZE) {
+            const p2p_header_t *hdr = (const p2p_header_t *)_msgbuf;
+            _type = hdr->type;
+            _payload_len = hdr->payload_len;
+            if (_crc != hdr->crc) {
+                _crc_fail++;
+                _state = ParseState::WAIT_SYNC1;
+            } else if (_payload_len == 0) {
+                _state = ParseState::WAIT_SYNC1;
+                return true;
+            } else {
+                _state = ParseState::PAYLOAD;
+            }
+        }
+        break;
+
+    case ParseState::PAYLOAD: {
+        if (_msg_len < SWARMMESH_MSG_BUF_MAX) {
+            _msgbuf[_msg_len] = b;
+        }
+        _msg_len++;
+        if (_msg_len == SWARMMESH_HEADER_SIZE + _payload_len) {
+            _state = ParseState::WAIT_SYNC1;
+            return true;
+        }
+        break;
+    }
+    }
+    return false;
+}
+
+// ---- packet processing ----
+
+void AP_SwarmMesh_Backend::process_packet()
+{
+    _last_rx_ms = AP_HAL::millis();
+
+    const p2p_header_t *hdr = (const p2p_header_t *)_msgbuf;
+
+    if (hdr->version != SWARMMESH_VERSION_01) {
+        _dropped++;
+        return;
+    }
+
+    AP_SwarmMesh::PeerState *ps = frontend_peerstate(hdr->origin_id);
+    if (ps == nullptr) {
+        _dropped++;
+        return;
+    }
+
+    if (ps->seq_seen_mask == 0) {
+        ps->seq_seen_mask = 1;
+        ps->last_seq = hdr->seq;
+    } else {
+        const int16_t delta = (int16_t)(hdr->seq - ps->last_seq);
+        if (delta == 0) {
+            _dedup++;
+            ps->drop_count++;
+            return;
+        } else if (delta > 0 && delta < 32) {
+            ps->seq_seen_mask = (ps->seq_seen_mask << (uint8_t)delta) | 1U;
+            ps->last_seq = hdr->seq;
+        } else if (delta >= 32) {
+            ps->seq_seen_mask = 1U;
+            ps->last_seq = hdr->seq;
+        } else if (delta > -32) {
+            const uint32_t bit = 1U << (uint8_t)(-delta);
+            if (ps->seq_seen_mask & bit) {
+                _dedup++;
+                ps->drop_count++;
+                return;
+            }
+            ps->seq_seen_mask |= bit;
+        } else {
+            _dropped++;
+            ps->drop_count++;
+            return;
+        }
+    }
+
+    if (!(hdr->flags & SWARMMESH_NO_RTC)) {
+        uint64_t utc_usec = 0;
+#if AP_RTC_ENABLED
+        AP::rtc().get_utc_usec(utc_usec);
+        const uint64_t deadline_us = (uint64_t)hdr->deadline_ms * 1000ULL;
+        if (utc_usec > hdr->origin_time_us && (utc_usec - hdr->origin_time_us) > deadline_us) {
+            _stale++;
+            ps->drop_count++;
+            return;
+        }
+#endif
+    }
+
+    if (hdr->ttl == 0) {
+        _ttl++;
+        ps->drop_count++;
+        return;
+    }
+
+    if (hdr->dest_id != frontend_sysid()) {
+        forward_mavlink(hdr->origin_id, hdr->dest_id,
+                        &_msgbuf[SWARMMESH_HEADER_SIZE],
+                        hdr->deadline_ms, hdr->ttl,
+                        hdr->payload_len, hdr->flags,
+                        hdr->origin_time_us, hdr->seq);
+        return;
+    }
+
+    if (hdr->type == SWARMMESH_TYPE_MAVLINK) {
+        ps->last_heard = AP_HAL::micros64();
+        ps->prev_id = hdr->prev_id;
+        ps->rx_count++;
+        mavlink_message_t msg;
+        const uint8_t *payload = &_msgbuf[SWARMMESH_HEADER_SIZE];
+        for (uint8_t i = 0; i < hdr->payload_len; i++) {
+            if (mavlink_frame_char_buffer(&_mavlink_rxmsg, &_mavlink_rx_status, payload[i], &msg, &_mavlink_rx_status)) {
+                handle_mavlink(msg, *ps);
+            }
+        }
+    } else {
+        _dropped++;
+        ps->drop_count++;
+    }
+}
+
+bool AP_SwarmMesh_Backend::log_rate_ok()
+{
+    const uint16_t rate_hz = frontend_log_rate_hz();
+    if (rate_hz == 0) {
+        return false;
+    }
+    const uint32_t now_ms = AP_HAL::millis();
+    const uint32_t interval_ms = 1000U / rate_hz;
+    if (now_ms - _last_log_ms < interval_ms) {
+        return false;
+    }
+    _last_log_ms = now_ms;
+    return true;
+}
+
+void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps)
+{
+    switch (msg.msgid) {
+
+    case MAVLINK_MSG_ID_HEARTBEAT: {
+        mavlink_heartbeat_t hb;
+        mavlink_msg_heartbeat_decode(&msg, &hb);
+        ps.vehicle_type = hb.type;
+        ps.armed_state = (hb.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
+        ps.mode = (uint8_t)hb.custom_mode;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::HEARTBEAT) && log_rate_ok()) {
+            const struct log_SwarmMesh_HB pkt{
+            LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_HB_MSG),
+            time_us         : AP_HAL::micros64(),
+            sysid           : ps.sysid,
+            vehicle_type    : ps.vehicle_type,
+            mode            : ps.mode,
+            armed_state     : (uint8_t)ps.armed_state
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_SYS_STATUS: {
+        mavlink_sys_status_t ss;
+        mavlink_msg_sys_status_decode(&msg, &ss);
+        ps.battery_voltage = ss.voltage_battery;
+        ps.failsafe_flags = ss.onboard_control_sensors_present
+                           & ss.onboard_control_sensors_enabled
+                           & ~ss.onboard_control_sensors_health;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::SYS_STATUS) && log_rate_ok()) {
+            const struct log_SwarmMesh_SS pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_SS_MSG),
+                time_us     : AP_HAL::micros64(),
+                sysid       : ps.sysid,
+                bat_voltage : ps.battery_voltage,
+                failsafe    : ps.failsafe_flags
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
+        mavlink_global_position_int_t gp;
+        mavlink_msg_global_position_int_decode(&msg, &gp);
+        ps.global_pos.x = (float)gp.lat;
+        ps.global_pos.y = (float)gp.lon;
+        ps.global_pos.z = (float)gp.alt;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::GLOBAL_POSITION_INT) && log_rate_ok()) {
+            const struct log_SwarmMesh_GP pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_GP_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                lat     : gp.lat,
+                lon     : gp.lon,
+                alt     : gp.alt
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_LOCAL_POSITION_NED: {
+        mavlink_local_position_ned_t lp;
+        mavlink_msg_local_position_ned_decode(&msg, &lp);
+        ps.local_pos_NED.x = lp.x;
+        ps.local_pos_NED.y = lp.y;
+        ps.local_pos_NED.z = lp.z;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::LOCAL_POSITION_NED) && log_rate_ok()) {
+            const struct log_SwarmMesh_LP pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_LP_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                x       : lp.x,
+                y       : lp.y,
+                z       : lp.z
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT: {
+        mavlink_position_target_global_int_t pt;
+        mavlink_msg_position_target_global_int_decode(&msg, &pt);
+        ps.target_pos.x = pt.lat_int;
+        ps.target_pos.y = pt.lon_int;
+        ps.target_pos.z = pt.alt;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::POSITION_TARGET_GLOBAL_INT) && log_rate_ok()) {
+            const struct log_SwarmMesh_PT pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_PT_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                lat     : pt.lat_int,
+                lon     : pt.lon_int,
+                alt     : pt.alt
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_EXTENDED_SYS_STATE: {
+        mavlink_extended_sys_state_t es;
+        mavlink_msg_extended_sys_state_decode(&msg, &es);
+        ps.landed_state = es.landed_state;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::EXTENDED_SYS_STATE) && log_rate_ok()) {
+            const struct log_SwarmMesh_ES pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_ES_MSG),
+                time_us        : AP_HAL::micros64(),
+                sysid          : ps.sysid,
+                landed_state   : es.landed_state
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_ATTITUDE: {
+        mavlink_attitude_t at;
+        mavlink_msg_attitude_decode(&msg, &at);
+        ps.attitude.x = at.roll;
+        ps.attitude.y = at.pitch;
+        ps.attitude.z = at.yaw;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::ATTITUDE) && log_rate_ok()) {
+            const struct log_SwarmMesh_AT pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_AT_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                pitch   : at.pitch,
+                roll    : at.roll,
+                yaw     : at.yaw
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_EKF_STATUS_REPORT: {
+        mavlink_ekf_status_report_t ek;
+        mavlink_msg_ekf_status_report_decode(&msg, &ek);
+        ps.pos_covariance[0] = ek.pos_horiz_variance;
+        ps.pos_covariance[1] = ek.pos_vert_variance;
+        ps.pos_covariance[2] = ek.velocity_variance;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::EKF_STATUS_REPORT) && log_rate_ok()) {
+            const struct log_SwarmMesh_EK pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_EK_MSG),
+                time_us       : AP_HAL::micros64(),
+                sysid         : ps.sysid,
+                pos_horiz_var : ek.pos_horiz_variance,
+                pos_vert_var  : ek.pos_vert_variance,
+                vel_var       : ek.velocity_variance
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    // TODO: Add more cases (NAV_CONTROLLER_OUTPUT, MISSION_CURRENT, ...)
+
+    default:
+        _dropped++;
+        ps.drop_count++;
+        break;
+    }
+}
+
+// ---- TX path ----
+
+void AP_SwarmMesh_Backend::send_mavlink(uint8_t dest_id, const mavlink_message_t *msg, uint16_t deadline_ms, uint8_t ttl)
+{
+    uint8_t payload[MAVLINK_MAX_PACKET_LEN];
+    const uint16_t payload_len = mavlink_msg_to_send_buffer(payload, msg);
+
+    if (transport_txspace() < SWARMMESH_HEADER_SIZE + payload_len) {
+        _tx_dropped++;
+        return;
+    }
+
+    p2p_header_t hdr {};
+    hdr.stx1           = SWARMMESH_SYNC1;
+    hdr.stx2           = SWARMMESH_SYNC2;
+    hdr.version        = SWARMMESH_VERSION_01;
+    hdr.type           = SWARMMESH_TYPE_MAVLINK;
+    hdr.origin_id      = frontend_sysid();
+    hdr.dest_id        = dest_id;
+    hdr.prev_id        = frontend_sysid();
+    hdr.ttl            = ttl;
+    hdr.seq            = _tx_seq++;
+    hdr.deadline_ms    = deadline_ms;
+    hdr.payload_len    = payload_len;
+
+    uint64_t utc_usec = 0;
+#if AP_RTC_ENABLED
+    AP::rtc().get_utc_usec(utc_usec);
+    hdr.flags          = SWARMMESH_NORMAL;
+#else
+    hdr.flags          = SWARMMESH_NO_RTC;
+#endif
+    hdr.origin_time_us = utc_usec;
+
+    uint8_t crc = 0;
+    const uint8_t *hdr_bytes = (const uint8_t *)&hdr;
+    for (uint8_t i = 0; i < SWARMMESH_HEADER_SIZE - 1; i++) {
+        crc += hdr_bytes[i];
+    }
+    hdr.crc = crc;
+
+    // write header + payload as a single buffer so datagram transports see one packet
+    uint8_t pkt[SWARMMESH_HEADER_SIZE + MAVLINK_MAX_PACKET_LEN];
+    memcpy(pkt, &hdr, SWARMMESH_HEADER_SIZE);
+    memcpy(pkt + SWARMMESH_HEADER_SIZE, payload, payload_len);
+    transport_write(pkt, SWARMMESH_HEADER_SIZE + payload_len);
+}
+
+void AP_SwarmMesh_Backend::forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq)
+{
+    if (transport_txspace() < SWARMMESH_HEADER_SIZE + payload_len) {
+        _dropped++;
+        return;
+    }
+
+    p2p_header_t hdr {};
+    hdr.stx1           = SWARMMESH_SYNC1;
+    hdr.stx2           = SWARMMESH_SYNC2;
+    hdr.version        = SWARMMESH_VERSION_01;
+    hdr.type           = SWARMMESH_TYPE_MAVLINK;
+    hdr.flags          = flags;
+    hdr.origin_id      = id;
+    hdr.dest_id        = dest_id;
+    hdr.prev_id        = frontend_sysid();
+    hdr.ttl            = (ttl - 1);
+    hdr.seq            = seq;
+    hdr.deadline_ms    = deadline_ms;
+    hdr.payload_len    = payload_len;
+    hdr.origin_time_us = origin_time;
+
+    uint8_t crc = 0;
+    const uint8_t *hdr_bytes = (const uint8_t *)&hdr;
+    for (uint8_t i = 0; i < SWARMMESH_HEADER_SIZE - 1; i++) {
+        crc += hdr_bytes[i];
+    }
+    hdr.crc = crc;
+
+    // write header + payload as a single buffer so datagram transports see one packet
+    uint8_t pkt[SWARMMESH_HEADER_SIZE + SWARMMESH_MAX_PAYLOAD];
+    memcpy(pkt, &hdr, SWARMMESH_HEADER_SIZE);
+    memcpy(pkt + SWARMMESH_HEADER_SIZE, payload, payload_len);
+    transport_write(pkt, SWARMMESH_HEADER_SIZE + payload_len);
+
+    _tx_fwd++;
+}
+
+void AP_SwarmMesh_Backend::send_stream(Bucket bucket)
+{
+    switch (bucket) {
+    case Bucket::POSITION:
+#if AP_AHRS_ENABLED
+        send_global_position_int();
+        send_local_position();
+#endif
+        break;
+    case Bucket::EXT_STAT:
+        send_sys_status();
+        send_nav_controller_output();
+        send_position_target_global_int();
+        break;
+    case Bucket::EXTRA1:
+#if AP_AHRS_ENABLED
+        send_attitude();
+        send_ekf_status_report();
+#endif
+        send_extended_sys_state();
+        break;
+    }
+    // TODO: Add more buckets (mode, mission state, etc.)
+}
+
+void AP_SwarmMesh_Backend::send_heartbeat()
+{
+    // TODO: base_mode()/system_status() are per-vehicle GCS_MAVLINK overrides we have no access to (no vehicle reference)
+    const bool armed = AP_HAL::get_HAL().util->get_soft_armed();
+    uint8_t base_mode = MAV_MODE_FLAG_STABILIZE_ENABLED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED;
+    if (armed) {
+        base_mode |= MAV_MODE_FLAG_SAFETY_ARMED;
+    }
+    const MAV_STATE system_status = armed ? MAV_STATE_ACTIVE : MAV_STATE_STANDBY;
+
+    mavlink_message_t msg;
+    mavlink_msg_heartbeat_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        gcs().frame_type(),
+        MAV_AUTOPILOT_ARDUPILOTMEGA,
+        base_mode,
+        gcs().custom_mode(),
+        system_status);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+#if AP_AHRS_ENABLED
+void AP_SwarmMesh_Backend::send_global_position_int()
+{
+    AP_AHRS &ahrs = AP::ahrs();
+
+    Location loc;
+    UNUSED_RESULT(ahrs.get_location(loc));
+
+    Vector3f vel;
+    if (!ahrs.get_velocity_NED(vel)) {
+        vel.zero();
+    }
+
+    float posD;
+    ahrs.get_relative_position_D_home(posD);
+    const int32_t relative_alt_mm = (int32_t)(-posD * 1000.0f);
+
+    mavlink_message_t msg;
+    mavlink_msg_global_position_int_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        loc.lat,
+        loc.lng,
+        loc.alt * 10,
+        relative_alt_mm,
+        (int16_t)(vel.x * 100),
+        (int16_t)(vel.y * 100),
+        (int16_t)(vel.z * 100),
+        ahrs.yaw_sensor);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Backend::send_local_position()
+{
+    const AP_AHRS &ahrs = AP::ahrs();
+
+    Vector3f pos, vel;
+    if (!ahrs.get_relative_position_NED_origin_float(pos) ||
+        !ahrs.get_velocity_NED(vel)) {
+        return;
+    }
+
+    mavlink_message_t msg;
+    mavlink_msg_local_position_ned_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        pos.x, pos.y, pos.z,
+        vel.x, vel.y, vel.z);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+#endif  // AP_AHRS_ENABLED
+
+// TODO: Access AC_PosControl (with guard) to fill in vel/accel targets
+void AP_SwarmMesh_Backend::send_position_target_global_int()
+{
+    AP_Vehicle *vehicle = AP::vehicle();
+    if (vehicle == nullptr) {
+        return;
+    }
+
+    Location target;
+    if (!vehicle->get_target_location(target)) {
+        return;
+    }
+    if (!target.initialised()) {
+        return;
+    }
+    float alt_amsl_m;
+    if (!target.get_alt_m(Location::AltFrame::ABSOLUTE, alt_amsl_m)) {
+        return;
+    }
+
+    static constexpr uint16_t POSITION_TARGET_TYPEMASK_LAST_BYTE = 0xF000;
+    static constexpr uint16_t TYPE_MASK =
+        POSITION_TARGET_TYPEMASK_VX_IGNORE | POSITION_TARGET_TYPEMASK_VY_IGNORE |
+        POSITION_TARGET_TYPEMASK_VZ_IGNORE | POSITION_TARGET_TYPEMASK_AX_IGNORE |
+        POSITION_TARGET_TYPEMASK_AY_IGNORE | POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+        POSITION_TARGET_TYPEMASK_YAW_IGNORE | POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE |
+        POSITION_TARGET_TYPEMASK_LAST_BYTE;
+
+    mavlink_message_t msg;
+    mavlink_msg_position_target_global_int_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        MAV_FRAME_GLOBAL,
+        TYPE_MASK,
+        target.lat,
+        target.lng,
+        alt_amsl_m,
+        0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f,
+        0.0f,
+        0.0f);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Backend::send_extended_sys_state()
+{
+    MAV_LANDED_STATE landed_state = MAV_LANDED_STATE_UNDEFINED;
+    AP_Vehicle *vehicle = AP::vehicle();
+    if (vehicle != nullptr) {
+        if (!vehicle->get_likely_flying()) {
+            landed_state = MAV_LANDED_STATE_ON_GROUND;
+        } else if (vehicle->is_landing()) {
+            landed_state = MAV_LANDED_STATE_LANDING;
+        } else if (vehicle->is_taking_off()) {
+            landed_state = MAV_LANDED_STATE_TAKEOFF;
+        } else {
+            landed_state = MAV_LANDED_STATE_IN_AIR;
+        }
+    }
+
+    mavlink_message_t msg;
+    mavlink_msg_extended_sys_state_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        MAV_VTOL_STATE_UNDEFINED,
+        landed_state);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+#if AP_AHRS_ENABLED
+void AP_SwarmMesh_Backend::send_attitude()
+{
+    const AP_AHRS &ahrs = AP::ahrs();
+    const Vector3f omega = ahrs.get_gyro();
+    mavlink_message_t msg;
+    mavlink_msg_attitude_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        ahrs.get_roll_rad(),
+        ahrs.get_pitch_rad(),
+        ahrs.get_yaw_rad(),
+        omega.x,
+        omega.y,
+        omega.z);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Backend::send_ekf_status_report()
+{
+    nav_filter_status filter_status{};
+    AP::ahrs().get_filter_status(filter_status);
+
+    uint16_t flags = 0;
+    if (filter_status.flags.attitude)          { flags |= EKF_ATTITUDE; }
+    if (filter_status.flags.horiz_vel)         { flags |= EKF_VELOCITY_HORIZ; }
+    if (filter_status.flags.vert_vel)          { flags |= EKF_VELOCITY_VERT; }
+    if (filter_status.flags.horiz_pos_rel)     { flags |= EKF_POS_HORIZ_REL; }
+    if (filter_status.flags.horiz_pos_abs)     { flags |= EKF_POS_HORIZ_ABS; }
+    if (filter_status.flags.vert_pos)          { flags |= EKF_POS_VERT_ABS; }
+    if (filter_status.flags.terrain_alt)       { flags |= EKF_POS_VERT_AGL; }
+    if (filter_status.flags.const_pos_mode)    { flags |= EKF_CONST_POS_MODE; }
+    if (filter_status.flags.pred_horiz_pos_rel){ flags |= EKF_PRED_POS_HORIZ_REL; }
+    if (filter_status.flags.pred_horiz_pos_abs){ flags |= EKF_PRED_POS_HORIZ_ABS; }
+    if (!filter_status.flags.initalized)       { flags |= EKF_UNINITIALIZED; }
+    if (filter_status.flags.gps_glitching)     { flags |= (1U << 15); }
+
+    float velVar = 0, posVar = 0, hgtVar = 0, tasVar = 0;
+    Vector3f magVar;
+    AP::ahrs().get_variances(velVar, posVar, hgtVar, magVar, tasVar);
+
+    mavlink_message_t msg;
+    mavlink_msg_ekf_status_report_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        flags,
+        velVar,
+        posVar,
+        hgtVar,
+        fmaxf(fmaxf(magVar.x, magVar.y), magVar.z),
+        0,
+        tasVar);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+#endif  // AP_AHRS_ENABLED
+
+// TODO: Fill in empty fields
+void AP_SwarmMesh_Backend::send_sys_status()
+{
+    float voltage_mv = 0;
+    float current_ca = -1;
+    int8_t remaining_pct = -1;
+
+#if AP_BATTERY_ENABLED
+    const AP_BattMonitor &battery = AP::battery();
+    if (battery.healthy()) {
+        voltage_mv = battery.gcs_voltage() * 1000.0f;
+        float amps;
+        if (battery.current_amps(amps)) {
+            current_ca = constrain_float(amps * 100.0f, -INT16_MAX, INT16_MAX);
+        }
+        uint8_t pct;
+        if (battery.capacity_remaining_pct(pct)) {
+            remaining_pct = (int8_t)pct;
+        }
+    }
+#endif
+
+    uint32_t sensors_present = 0;
+    uint32_t sensors_enabled = 0;
+    uint32_t sensors_health = 0;
+    gcs().get_sensor_status_flags(sensors_present, sensors_enabled, sensors_health);
+
+    mavlink_message_t msg;
+    mavlink_msg_sys_status_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        sensors_present,
+        sensors_enabled,
+        sensors_health,
+        0,
+        (uint16_t)voltage_mv,
+        (int16_t)current_ca,
+        remaining_pct,
+        0, 0,
+        0, 0, 0, 0,
+        0, 0, 0);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+// TODO: Find way to access control targets to fill in empty fields
+void AP_SwarmMesh_Backend::send_nav_controller_output()
+{
+    // TODO: SwarmMesh has no access to mode-specific control targets (no vehicle reference)
+    float nav_roll_deg = 0;
+    float nav_pitch_deg = 0;
+
+    float wp_bearing_deg = 0;
+    float wp_distance_m = 0;
+    float xtrack_error_m = 0;
+    AP_Vehicle *vehicle = AP::vehicle();
+    if (vehicle != nullptr) {
+        vehicle->get_wp_bearing_deg(wp_bearing_deg);
+        vehicle->get_wp_distance_m(wp_distance_m);
+        vehicle->get_wp_crosstrack_error_m(xtrack_error_m);
+    }
+
+    mavlink_message_t msg;
+    mavlink_msg_nav_controller_output_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        nav_roll_deg,
+        nav_pitch_deg,
+        (int16_t)wp_bearing_deg,
+        (int16_t)wp_bearing_deg,
+        (uint16_t)MIN(wp_distance_m, (float)UINT16_MAX),
+        0,
+        0,
+        xtrack_error_m);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+// ---- log_stats ----
+
+#if HAL_LOGGING_ENABLED
+void AP_SwarmMesh_Backend::log_stats()
+{
+    const struct log_SwarmMesh pkt{
+       LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_MSG),
+       time_us         : AP_HAL::micros64(),
+       crc_fail        : _crc_fail,
+       stale           : _stale,
+       ttl             : _ttl,
+       dedup           : _dedup,
+       drop            : _dropped,
+       txseq           : _tx_seq,
+       txfwd           : _tx_fwd,
+       txdrop          : _tx_dropped
+    };
+    AP::logger().WriteBlock(&pkt, sizeof(pkt));
+}
+#endif  // HAL_LOGGING_ENABLED
 
 #endif  // AP_SWARMMESH_ENABLED

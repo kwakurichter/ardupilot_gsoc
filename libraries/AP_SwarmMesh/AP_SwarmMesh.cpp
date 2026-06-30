@@ -135,13 +135,13 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
     AP_GROUPINFO("_SAVE_HZ", 11, AP_SwarmMesh, save_rate_hz, 1),
 #endif
 
-    // @Param: _PRUNE_TIMEOUT
-    // @DisplayName: Peer table prune timeout
-    // @Description: How often the peer table is checked for stale (non-fresh) entries, which are then deleted to free up space for new peers. 0 disables pruning.
+    // @Param: _PRUNE_SECS
+    // @DisplayName: Peer table prune interval
+    // @Description: How often (seconds) the peer table is checked for stale (non-fresh) entries and deleted to free space for new peers. 0 disables pruning.
     // @Units: s
     // @Range: 0 60
     // @User: Advanced
-    AP_GROUPINFO("_PRUNE_TIMEOUT", 12, AP_SwarmMesh, prune_timeout, 10),
+    AP_GROUPINFO("_PRUNE_SECS", 12, AP_SwarmMesh, prune_timeout, 10),
 
     AP_GROUPEND
 };
