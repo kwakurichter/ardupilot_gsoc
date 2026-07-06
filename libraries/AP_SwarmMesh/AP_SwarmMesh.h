@@ -62,10 +62,13 @@ public:
         bool     freshness;     // true: FRESH, false: STALE
         // Kinematic state
         Vector3f local_pos_NED; // offset from origin [x, y, z] in meters
-        Vector3f global_pos;    // GPS [lat (degE7), lon (degE7). alt (mm)]
-        float    pos_covariance[9];
+        Vector3l global_pos;    // GPS [lat (degE7), lon (degE7), alt (mm)]
+        int16_t  velocity[3];   // actual velocity [x, y, z] NED, cm/s. From LOCAL_POSITION_NED or GLOBAL_POSITION_INT; global overrides local when both arrive in the same TX cycle
+        int16_t  accel[3];      // actual acceleration [x, y, z] body frame, mG, EKF bias removed. From SCALED_IMU
+        float    pos_horiz_variance; // EKF horizontal position variance, from EKF_STATUS_REPORT
+        float    pos_vert_variance;  // EKF vertical position variance, from EKF_STATUS_REPORT
+        float    vel_variance;       // EKF velocity variance, from EKF_STATUS_REPORT
         Vector3f attitude;      // [pitch, roll, yaw] in rads
-        float    att_covariance[9];
         // Vehicle state
         uint8_t  mode;
         bool     armed_state;   // true: armed, false: disarmed
@@ -77,7 +80,9 @@ public:
         uint8_t  role;
         uint8_t  task_id;
         uint8_t  formation_slot;
-        Vector3f target_pos;    // [lat (degE7), lon (degE7). alt (mm)]
+        Vector3l target_pos;    // [lat (degE7), lon (degE7), alt (mm)]
+        int16_t  target_velocity[3]; // commanded velocity [x, y, z] NED, cm/s, from POSITION_TARGET_GLOBAL_INT
+        int16_t  target_accel[3];    // commanded acceleration [x, y, z] NED, cm/s/s, from POSITION_TARGET_GLOBAL_INT
         uint8_t  priority;
     };
 

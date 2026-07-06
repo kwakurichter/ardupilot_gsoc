@@ -120,10 +120,10 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
 
     // @Param: _LOG_MASK
     // @DisplayName: RX log message mask
-    // @Description: Bitmask of which RX message types are written to the dataflash log (still subject to LOG_HZ). Bits 8-31 are reserved for future message types.
-    // @Bitmask: 0:Heartbeat,1:SysStatus,2:GlobalPositionInt,3:LocalPositionNED,4:PositionTargetGlobalInt,5:ExtendedSysState,6:Attitude,7:EkfStatusReport
+    // @Description: Bitmask of which RX message types are written to the dataflash log (still subject to LOG_HZ). Bits 9-31 are reserved for future message types.
+    // @Bitmask: 0:Heartbeat,1:SysStatus,2:GlobalPositionInt,3:LocalPositionNED,4:PositionTargetGlobalInt,5:ExtendedSysState,6:Attitude,7:EkfStatusReport,8:ScaledIMU
     // @User: Advanced
-    AP_GROUPINFO("_LOG_MASK", 10, AP_SwarmMesh, log_mask, 0xFF),
+    AP_GROUPINFO("_LOG_MASK", 10, AP_SwarmMesh, log_mask, 0x1FF),
 
 #if AP_FILESYSTEM_FILE_WRITING_ENABLED
     // @Param: _SAVE_HZ
@@ -442,12 +442,12 @@ void AP_SwarmMesh::load_peer_snapshot()
         ps->failsafe_flags  = rec.failsafe_flags;
         ps->battery_voltage = rec.battery_voltage;
         ps->local_pos_NED   = Vector3f(rec.local_pos_NED[0], rec.local_pos_NED[1], rec.local_pos_NED[2]);
-        ps->global_pos      = Vector3f(rec.global_pos[0], rec.global_pos[1], rec.global_pos[2]);
+        ps->global_pos      = Vector3l(rec.global_pos[0], rec.global_pos[1], rec.global_pos[2]);
         ps->attitude        = Vector3f(rec.attitude[0], rec.attitude[1], rec.attitude[2]);
         ps->role            = rec.role;
         ps->task_id         = rec.task_id;
         ps->formation_slot  = rec.formation_slot;
-        ps->target_pos      = Vector3f(rec.target_pos[0], rec.target_pos[1], rec.target_pos[2]);
+        ps->target_pos      = Vector3l(rec.target_pos[0], rec.target_pos[1], rec.target_pos[2]);
         ps->priority        = rec.priority;
         restored++;
     }

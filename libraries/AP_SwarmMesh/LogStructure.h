@@ -12,7 +12,8 @@
     LOG_SWARMMESH_PT_MSG,      \
     LOG_SWARMMESH_ES_MSG,      \
     LOG_SWARMMESH_AT_MSG,      \
-    LOG_SWARMMESH_EK_MSG
+    LOG_SWARMMESH_EK_MSG,      \
+    LOG_SWARMMESH_IM_MSG
     // TODO: Add more log types
 
 // @LoggerMessage: SMST
@@ -78,6 +79,9 @@ struct PACKED log_SwarmMesh_SS {
 // @Field: Lat: Latitude in degE7
 // @Field: Lon: Longitude in degE7
 // @Field: Alt: Altitude above MSL in mm
+// @Field: VX: Velocity X (NED)
+// @Field: VY: Velocity Y (NED)
+// @Field: VZ: Velocity Z (NED)
 
 struct PACKED log_SwarmMesh_GP {
     LOG_PACKET_HEADER;
@@ -86,6 +90,9 @@ struct PACKED log_SwarmMesh_GP {
     int32_t  lat;
     int32_t  lon;
     int32_t  alt;
+    int16_t  vx;
+    int16_t  vy;
+    int16_t  vz;
 };
 
 // @LoggerMessage: SMLP
@@ -95,6 +102,9 @@ struct PACKED log_SwarmMesh_GP {
 // @Field: x: x distance in m
 // @Field: y: y distance in m
 // @Field: z: z distance in m
+// @Field: VX: Velocity X (local NED)
+// @Field: VY: Velocity Y (local NED)
+// @Field: VZ: Velocity Z (local NED)
 
 struct PACKED log_SwarmMesh_LP {
     LOG_PACKET_HEADER;
@@ -103,6 +113,9 @@ struct PACKED log_SwarmMesh_LP {
     float    x;
     float    y;
     float    z;
+    float    vx;
+    float    vy;
+    float    vz;
 };
 
 // @LoggerMessage: SMPT
@@ -112,6 +125,12 @@ struct PACKED log_SwarmMesh_LP {
 // @Field: Lat: Latitude in degE7
 // @Field: Lon: Longitude in degE7
 // @Field: Alt: Altitude AMSL in m
+// @Field: VX: Target velocity X (NED)
+// @Field: VY: Target velocity Y (NED)
+// @Field: VZ: Target velocity Z (NED)
+// @Field: AX: Target acceleration X (NED)
+// @Field: AY: Target acceleration Y (NED)
+// @Field: AZ: Target acceleration Z (NED)
 
 struct PACKED log_SwarmMesh_PT {
     LOG_PACKET_HEADER;
@@ -120,6 +139,12 @@ struct PACKED log_SwarmMesh_PT {
     int32_t  lat;
     int32_t  lon;
     float    alt;
+    float    vx;
+    float    vy;
+    float    vz;
+    float    afx;
+    float    afy;
+    float    afz;
 };
 
 // @LoggerMessage: SMES
@@ -171,6 +196,23 @@ struct PACKED log_SwarmMesh_EK {
     float    vel_var;
 };
 
+// @LoggerMessage: SMIM
+// @Description: SwarmMesh RX Scaled IMU (actual acceleration)
+// @Field: TimeUS: Time since system startup
+// @Field: SysID: SysID of origin
+// @Field: AX: X acceleration (body frame, mG)
+// @Field: AY: Y acceleration (body frame, mG)
+// @Field: AZ: Z acceleration (body frame, mG)
+
+struct PACKED log_SwarmMesh_IM {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t  sysid;
+    int16_t  xacc;
+    int16_t  yacc;
+    int16_t  zacc;
+};
+
 #if AP_SWARMMESH_ENABLED
 #define LOG_STRUCTURE_FROM_SWARMMESH \
     { LOG_SWARMMESH_MSG, sizeof(log_SwarmMesh), \
@@ -180,17 +222,19 @@ struct PACKED log_SwarmMesh_EK {
     { LOG_SWARMMESH_SS_MSG, sizeof(log_SwarmMesh_SS), \
         "SMSS", "QBHI",  "TimeUS,SysID,BVol,FS", "s---", "F---", true },  \
     { LOG_SWARMMESH_GP_MSG, sizeof(log_SwarmMesh_GP), \
-        "SMGP", "QBLLi",  "TimeUS,SysID,Lat,Lon,Alt", "s----", "F----", true },  \
+        "SMGP", "QBLLihhh",  "TimeUS,SysID,Lat,Lon,Alt,VX,VY,VZ", "s----nnn", "F----BBB", true },  \
     { LOG_SWARMMESH_LP_MSG, sizeof(log_SwarmMesh_LP), \
-        "SMLP", "QBfff",  "TimeUS,SysID,x,y,z", "s-mmm", "F-000", true },  \
+        "SMLP", "QBffffff",  "TimeUS,SysID,x,y,z,VX,VY,VZ", "s-mmmnnn", "F-000000", true },  \
     { LOG_SWARMMESH_PT_MSG, sizeof(log_SwarmMesh_PT), \
-        "SMPT", "QBLLf",  "TimeUS,SysID,Lat,Lon,Alt", "s---m", "F---0", true },  \
+        "SMPT", "QBLLfffffff",  "TimeUS,SysID,Lat,Lon,Alt,VX,VY,VZ,AX,AY,AZ", "s---mnnnooo", "F---0000000", true },  \
     { LOG_SWARMMESH_ES_MSG, sizeof(log_SwarmMesh_ES), \
         "SMES", "QBB",  "TimeUS,SysID,LS", "s--", "F--", true },  \
     { LOG_SWARMMESH_AT_MSG, sizeof(log_SwarmMesh_AT), \
         "SMAT", "QBfff",  "TimeUS,SysID,Pitch,Roll,Yaw", "s----", "F----", true },  \
     { LOG_SWARMMESH_EK_MSG, sizeof(log_SwarmMesh_EK), \
-        "SMEK", "QBfff",  "TimeUS,SysID,PHV,PVV,VV", "s----", "F----", true },
+        "SMEK", "QBfff",  "TimeUS,SysID,PHV,PVV,VV", "s----", "F----", true },  \
+    { LOG_SWARMMESH_IM_MSG, sizeof(log_SwarmMesh_IM), \
+        "SMIM", "QBhhh",  "TimeUS,SysID,AX,AY,AZ", "s----", "F----", true },
 #else
 #define LOG_STRUCTURE_FROM_SWARMMESH
 #endif

@@ -25,7 +25,7 @@
 #define AP_SWARMMESH_PEER_FILE "/APM/PEERS/peers.dat"
 
 #define AP_SWARMMESH_PEER_FILE_MAGIC   0x53574D50UL  // 'SWMP'
-#define AP_SWARMMESH_PEER_FILE_VERSION 1
+#define AP_SWARMMESH_PEER_FILE_VERSION 2  // v2: global_pos/target_pos lat/lon/alt stored as int32_t, not float
 
 #pragma pack(push, 1)
 
@@ -48,12 +48,12 @@ typedef struct {
     uint32_t failsafe_flags;
     uint16_t battery_voltage;
     float    local_pos_NED[3];
-    float    global_pos[3];
+    int32_t  global_pos[3];   // [lat (degE7), lon (degE7), alt (mm)]
     float    attitude[3];
     uint8_t  role;
     uint8_t  task_id;
     uint8_t  formation_slot;
-    float    target_pos[3];
+    int32_t  target_pos[3];   // [lat (degE7), lon (degE7), alt (mm)]
     uint8_t  priority;
 } AP_SwarmMesh_PeerSnapshot_t;
 

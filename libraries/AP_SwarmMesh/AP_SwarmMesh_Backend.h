@@ -75,10 +75,10 @@ private:
     enum class Bucket : uint8_t {
         POSITION = 0,   // GLOBAL_POSITION_INT, LOCAL_POSITION_NED
         EXT_STAT = 1,   // SYS_STATUS, NAV_CONTROLLER_OUTPUT, POSITION_TARGET_GLOBAL_INT, MISSION_CURRENT
-        EXTRA1   = 2,   // ATTITUDE, EKF_STATUS_REPORT
+        EXTRA1   = 2,   // ATTITUDE, EKF_STATUS_REPORT, SCALED_IMU
     };
 
-    // RX message types gated by the _LOG_MASK param (bits 8-31 reserved)
+    // RX message types gated by the _LOG_MASK param (bits 9-31 reserved)
     enum class LogMsg : uint32_t {
         HEARTBEAT                   = 1U << 0,
         SYS_STATUS                  = 1U << 1,
@@ -88,6 +88,7 @@ private:
         EXTENDED_SYS_STATE          = 1U << 5,
         ATTITUDE                    = 1U << 6,
         EKF_STATUS_REPORT           = 1U << 7,
+        SCALED_IMU                  = 1U << 8,
     };
 
     // RX parser state machine
@@ -144,6 +145,7 @@ private:
     void send_local_position();
     void send_attitude();
     void send_ekf_status_report();
+    void send_scaled_imu();
 #endif
     void send_sys_status();
     void send_nav_controller_output();

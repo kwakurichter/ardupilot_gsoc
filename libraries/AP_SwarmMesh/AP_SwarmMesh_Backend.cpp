@@ -28,6 +28,10 @@
 #endif
 #include <AP_Vehicle/AP_Vehicle.h>
 
+#if AP_SWARMMESH_POSCONTROL_ENABLED
+#include <AC_AttitudeControl/AC_PosControl.h>
+#endif
+
 #include "LogStructure.h"
 
 extern const AP_HAL::HAL& hal;
@@ -384,9 +388,12 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
     case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
         mavlink_global_position_int_t gp;
         mavlink_msg_global_position_int_decode(&msg, &gp);
-        ps.global_pos.x = (float)gp.lat;
-        ps.global_pos.y = (float)gp.lon;
-        ps.global_pos.z = (float)gp.alt;
+        ps.global_pos.x = gp.lat;
+        ps.global_pos.y = gp.lon;
+        ps.global_pos.z = gp.alt;
+        ps.velocity[0] = gp.vx;
+        ps.velocity[1] = gp.vy;
+        ps.velocity[2] = gp.vz;
 #if HAL_LOGGING_ENABLED
         if ((frontend_log_mask() & (uint32_t)LogMsg::GLOBAL_POSITION_INT) && log_rate_ok()) {
             const struct log_SwarmMesh_GP pkt{
@@ -395,7 +402,10 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
                 sysid   : ps.sysid,
                 lat     : gp.lat,
                 lon     : gp.lon,
-                alt     : gp.alt
+                alt     : gp.alt,
+                vx      : gp.vx,
+                vy      : gp.vy,
+                vz      : gp.vz
             };
             AP::logger().WriteBlock(&pkt, sizeof(pkt));
         }
@@ -409,6 +419,9 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
         ps.local_pos_NED.x = lp.x;
         ps.local_pos_NED.y = lp.y;
         ps.local_pos_NED.z = lp.z;
+        ps.velocity[0] = (int16_t)constrain_float(lp.vx * 100.0f, INT16_MIN, INT16_MAX);
+        ps.velocity[1] = (int16_t)constrain_float(lp.vy * 100.0f, INT16_MIN, INT16_MAX);
+        ps.velocity[2] = (int16_t)constrain_float(lp.vz * 100.0f, INT16_MIN, INT16_MAX);
 #if HAL_LOGGING_ENABLED
         if ((frontend_log_mask() & (uint32_t)LogMsg::LOCAL_POSITION_NED) && log_rate_ok()) {
             const struct log_SwarmMesh_LP pkt{
@@ -417,7 +430,10 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
                 sysid   : ps.sysid,
                 x       : lp.x,
                 y       : lp.y,
-                z       : lp.z
+                z       : lp.z,
+                vx      : lp.vx,
+                vy      : lp.vy,
+                vz      : lp.vz
             };
             AP::logger().WriteBlock(&pkt, sizeof(pkt));
         }
@@ -430,7 +446,13 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
         mavlink_msg_position_target_global_int_decode(&msg, &pt);
         ps.target_pos.x = pt.lat_int;
         ps.target_pos.y = pt.lon_int;
-        ps.target_pos.z = pt.alt;
+        ps.target_pos.z = (int32_t)(pt.alt * 1000.0f);  // m -> mm
+        ps.target_velocity[0] = (int16_t)constrain_float(pt.vx * 100.0f, INT16_MIN, INT16_MAX);
+        ps.target_velocity[1] = (int16_t)constrain_float(pt.vy * 100.0f, INT16_MIN, INT16_MAX);
+        ps.target_velocity[2] = (int16_t)constrain_float(pt.vz * 100.0f, INT16_MIN, INT16_MAX);
+        ps.target_accel[0] = (int16_t)constrain_float(pt.afx * 100.0f, INT16_MIN, INT16_MAX);
+        ps.target_accel[1] = (int16_t)constrain_float(pt.afy * 100.0f, INT16_MIN, INT16_MAX);
+        ps.target_accel[2] = (int16_t)constrain_float(pt.afz * 100.0f, INT16_MIN, INT16_MAX);
 #if HAL_LOGGING_ENABLED
         if ((frontend_log_mask() & (uint32_t)LogMsg::POSITION_TARGET_GLOBAL_INT) && log_rate_ok()) {
             const struct log_SwarmMesh_PT pkt{
@@ -439,7 +461,13 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
                 sysid   : ps.sysid,
                 lat     : pt.lat_int,
                 lon     : pt.lon_int,
-                alt     : pt.alt
+                alt     : pt.alt,
+                vx      : pt.vx,
+                vy      : pt.vy,
+                vz      : pt.vz,
+                afx     : pt.afx,
+                afy     : pt.afy,
+                afz     : pt.afz
             };
             AP::logger().WriteBlock(&pkt, sizeof(pkt));
         }
@@ -490,9 +518,9 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
     case MAVLINK_MSG_ID_EKF_STATUS_REPORT: {
         mavlink_ekf_status_report_t ek;
         mavlink_msg_ekf_status_report_decode(&msg, &ek);
-        ps.pos_covariance[0] = ek.pos_horiz_variance;
-        ps.pos_covariance[1] = ek.pos_vert_variance;
-        ps.pos_covariance[2] = ek.velocity_variance;
+        ps.pos_horiz_variance = ek.pos_horiz_variance;
+        ps.pos_vert_variance = ek.pos_vert_variance;
+        ps.vel_variance = ek.velocity_variance;
 #if HAL_LOGGING_ENABLED
         if ((frontend_log_mask() & (uint32_t)LogMsg::EKF_STATUS_REPORT) && log_rate_ok()) {
             const struct log_SwarmMesh_EK pkt{
@@ -502,6 +530,28 @@ void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_Swarm
                 pos_horiz_var : ek.pos_horiz_variance,
                 pos_vert_var  : ek.pos_vert_variance,
                 vel_var       : ek.velocity_variance
+            };
+            AP::logger().WriteBlock(&pkt, sizeof(pkt));
+        }
+#endif
+        break;
+    }
+
+    case MAVLINK_MSG_ID_SCALED_IMU: {
+        mavlink_scaled_imu_t si;
+        mavlink_msg_scaled_imu_decode(&msg, &si);
+        ps.accel[0] = si.xacc;
+        ps.accel[1] = si.yacc;
+        ps.accel[2] = si.zacc;
+#if HAL_LOGGING_ENABLED
+        if ((frontend_log_mask() & (uint32_t)LogMsg::SCALED_IMU) && log_rate_ok()) {
+            const struct log_SwarmMesh_IM pkt{
+                LOG_PACKET_HEADER_INIT(LOG_SWARMMESH_IM_MSG),
+                time_us : AP_HAL::micros64(),
+                sysid   : ps.sysid,
+                xacc    : si.xacc,
+                yacc    : si.yacc,
+                zacc    : si.zacc
             };
             AP::logger().WriteBlock(&pkt, sizeof(pkt));
         }
@@ -609,8 +659,9 @@ void AP_SwarmMesh_Backend::send_stream(Bucket bucket)
     switch (bucket) {
     case Bucket::POSITION:
 #if AP_AHRS_ENABLED
-        send_global_position_int();
+        // TODO: add if/else logic so if global pos is active, local doesn't send
         send_local_position();
+        send_global_position_int();
 #endif
         break;
     case Bucket::EXT_STAT:
@@ -622,6 +673,7 @@ void AP_SwarmMesh_Backend::send_stream(Bucket bucket)
 #if AP_AHRS_ENABLED
         send_attitude();
         send_ekf_status_report();
+        send_scaled_imu();
 #endif
         send_extended_sys_state();
         break;
@@ -711,7 +763,6 @@ void AP_SwarmMesh_Backend::send_local_position()
 }
 #endif  // AP_AHRS_ENABLED
 
-// TODO: Access AC_PosControl (with guard) to fill in vel/accel targets
 void AP_SwarmMesh_Backend::send_position_target_global_int()
 {
     AP_Vehicle *vehicle = AP::vehicle();
@@ -732,12 +783,34 @@ void AP_SwarmMesh_Backend::send_position_target_global_int()
     }
 
     static constexpr uint16_t POSITION_TARGET_TYPEMASK_LAST_BYTE = 0xF000;
-    static constexpr uint16_t TYPE_MASK =
+    static constexpr uint16_t NE_IGNORE =
         POSITION_TARGET_TYPEMASK_VX_IGNORE | POSITION_TARGET_TYPEMASK_VY_IGNORE |
-        POSITION_TARGET_TYPEMASK_VZ_IGNORE | POSITION_TARGET_TYPEMASK_AX_IGNORE |
-        POSITION_TARGET_TYPEMASK_AY_IGNORE | POSITION_TARGET_TYPEMASK_AZ_IGNORE |
+        POSITION_TARGET_TYPEMASK_AX_IGNORE | POSITION_TARGET_TYPEMASK_AY_IGNORE;
+    static constexpr uint16_t D_IGNORE =
+        POSITION_TARGET_TYPEMASK_VZ_IGNORE | POSITION_TARGET_TYPEMASK_AZ_IGNORE;
+    uint16_t type_mask =
+        NE_IGNORE | D_IGNORE |
         POSITION_TARGET_TYPEMASK_YAW_IGNORE | POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE |
         POSITION_TARGET_TYPEMASK_LAST_BYTE;
+
+    // vel/accel targets require AC_PosControl, which not every vehicle type links or instantiates
+    Vector3f vel_target, accel_target;
+#if AP_SWARMMESH_POSCONTROL_ENABLED
+    AC_PosControl *pos_control = AC_PosControl::get_singleton();
+    if (pos_control != nullptr) {
+        const Vector3f v = pos_control->get_vel_target_NED_ms();
+        const Vector3f a = pos_control->get_accel_target_NED_mss();
+        if (pos_control->NE_is_active() && pos_control->D_is_active()) {
+            vel_target = v;
+            accel_target = a;
+            type_mask &= ~(NE_IGNORE | D_IGNORE);
+        } else if (pos_control->D_is_active()) {
+            vel_target.z = v.z;
+            accel_target.z = a.z;
+            type_mask &= ~D_IGNORE;
+        }
+    }
+#endif
 
     mavlink_message_t msg;
     mavlink_msg_position_target_global_int_pack(
@@ -746,12 +819,12 @@ void AP_SwarmMesh_Backend::send_position_target_global_int()
         &msg,
         AP_HAL::millis(),
         MAV_FRAME_GLOBAL,
-        TYPE_MASK,
+        type_mask,
         target.lat,
         target.lng,
         alt_amsl_m,
-        0.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 0.0f,
+        vel_target.x, vel_target.y, vel_target.z,
+        accel_target.x, accel_target.y, accel_target.z,
         0.0f,
         0.0f);
 
@@ -841,6 +914,28 @@ void AP_SwarmMesh_Backend::send_ekf_status_report()
         fmaxf(fmaxf(magVar.x, magVar.y), magVar.z),
         0,
         tasVar);
+
+    send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
+}
+
+void AP_SwarmMesh_Backend::send_scaled_imu()
+{
+    const AP_AHRS &ahrs = AP::ahrs();
+    // body frame, m/s/s, with the EKF's estimated accelerometer bias removed
+    const Vector3f accel = ahrs.get_accel() - ahrs.get_accel_bias();
+
+    mavlink_message_t msg;
+    mavlink_msg_scaled_imu_pack(
+        frontend_sysid(),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        AP_HAL::millis(),
+        (int16_t)constrain_float(accel.x * 1000.0f / GRAVITY_MSS, INT16_MIN, INT16_MAX),
+        (int16_t)constrain_float(accel.y * 1000.0f / GRAVITY_MSS, INT16_MIN, INT16_MAX),
+        (int16_t)constrain_float(accel.z * 1000.0f / GRAVITY_MSS, INT16_MIN, INT16_MAX),
+        0, 0, 0,
+        0, 0, 0,
+        0);
 
     send_mavlink(frontend_dest_id(), &msg, 0, frontend_ttl());
 }
