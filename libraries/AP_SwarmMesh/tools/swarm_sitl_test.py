@@ -49,7 +49,7 @@ BOOT_WAIT_S         = 12     # seconds to wait for all instances to finish booti
 
 def find_sitl_binary():
     candidates = [
-        Path(__file__).resolve().parents[4] / "build" / "sitl" / "bin" / "arducopter",
+        Path(__file__).resolve().parents[3] / "build" / "sitl" / "bin" / "arducopter",
         Path("/usr/local/bin/arducopter"),
     ]
     for p in candidates:

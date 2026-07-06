@@ -73,9 +73,9 @@ const AP_Param::GroupInfo AP_SwarmMesh::var_info[] = {
 
     // @Param: _SWARM_SIZE
     // @DisplayName: Swarm size
-    // @Description: Size of swarm (peers + GCS)
+    // @Description: Size of swarm (peers + GCS). Constrained to AP_SWARMMESH_MAX_PEERS (board-dependent, up to 255) regardless of the value set here. 0 uses the board's compile time max.
     // @Increment: 1
-    // @Range: 0 16
+    // @Range: 0 255
     // @User: Advanced
     AP_GROUPINFO("_SWARM_SIZE", 4, AP_SwarmMesh, swarm_size, 0),
 
@@ -285,7 +285,7 @@ bool AP_SwarmMesh::device_ready(void) const
 bool AP_SwarmMesh::peer_is_allowed(uint8_t peer_sysid) const
 {
     bool any_set = false;
-    for (uint8_t i = 0; i < AP_SWARMMESH_MAX_PEERS; i++) {
+    for (uint8_t i = 0; i < AP_SWARMMESH_MAX_PEER_FILTERS; i++) {
         const uint8_t f = (uint8_t)peer_filter[i];
         if (f == 0) {
             continue;
@@ -303,8 +303,8 @@ bool AP_SwarmMesh::peer_is_allowed(uint8_t peer_sysid) const
 // or the peer is excluded by the neighbourhood filter.
 AP_SwarmMesh::PeerState *AP_SwarmMesh::find_or_alloc_peer(uint8_t peer_sysid)
 {
-    // respect swarm_size if set, otherwise fall back to compile-time max
-    const uint8_t limit = (swarm_size > 0) ? MIN((uint8_t)swarm_size, (uint8_t)AP_SWARMMESH_MAX_PEERS) : AP_SWARMMESH_MAX_PEERS;
+    // respect swarm_size if set, otherwise fall back to compile time max.
+    const uint8_t limit = (swarm_size > 0) ? (uint8_t)MIN((int16_t)swarm_size, (int16_t)AP_SWARMMESH_MAX_PEERS) : AP_SWARMMESH_MAX_PEERS;
 
     for (uint8_t i = 0; i < num_peers; i++) {
         if (peer_state[i].sysid == peer_sysid) {

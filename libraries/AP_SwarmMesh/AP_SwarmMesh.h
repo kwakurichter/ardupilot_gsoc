@@ -141,7 +141,7 @@ private:
     // parameters
     AP_Enum<Type> _type;
     AP_Int8  stream_rate[NUM_BUCKETS];  // SR_POSITION, SR_EXT_STAT, SR_EXTRA1 (Hz; 0 = disabled)
-    AP_Int8  swarm_size;
+    AP_Int16 swarm_size;
     AP_Int8  destination_id;
     AP_Int8  sysid;
     AP_Int8  ttl;
@@ -152,7 +152,7 @@ private:
     AP_Int8  save_rate_hz; // rate (Hz) at which the on-disk peer snapshot is rewritten; 0 disables
 #endif
     AP_Int8  prune_timeout;
-    AP_Int8  peer_filter[AP_SWARMMESH_MAX_PEERS]; // neighbourhood allowlist; 0 = slot unused
+    AP_Int8  peer_filter[AP_SWARMMESH_MAX_PEER_FILTERS]; // neighbourhood allowlist. 0 = slot unused
 
     // external references
     AP_SwarmMesh_Backend *_driver;
