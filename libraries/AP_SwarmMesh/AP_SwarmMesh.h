@@ -18,6 +18,7 @@
 
 #if AP_SWARMMESH_ENABLED
 #include <AP_Common/AP_Common.h>
+#include <AP_Common/Location.h>
 #include <AP_Param/AP_Param.h>
 #include <AP_Math/AP_Math.h>
 #include <AP_Filesystem/AP_Filesystem_config.h>
@@ -104,6 +105,12 @@ public:
     // return data for a specific peer by index
     bool get_peer_data(uint8_t peer_id, struct PeerState& state) const;
 
+    // fill loc with peer's last global pos, returns false if the peer is unknown or its entry is stale.
+    bool get_peer_location(Location& loc, uint8_t peer_sysid) const;
+
+    // fill vel_ned with the peer's last vel, returns false if the peer is unknown or its entry is stale.
+    bool get_peer_velocity_NED(Vector3f& vel_ned, uint8_t peer_sysid) const;
+
     static const struct AP_Param::GroupInfo var_info[];
 
     // a method for vehicles to call to make onboard log messages:
@@ -120,6 +127,9 @@ private:
     // find an existing peer entry by sysid, or allocate a new one.
     // returns nullptr if the table is full and the peer is not already present.
     PeerState *find_or_alloc_peer(uint8_t peer_sysid);
+
+    // find an existing peer entry by sysid without allocating. returns nullptr if absent.
+    const PeerState *find_peer_by_sysid(uint8_t peer_sysid) const;
 
     // returns true if peer_sysid is allowed by the neighbourhood filter.
     // when all _PEER_* slots are 0 (default), every sysid is allowed.

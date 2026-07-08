@@ -178,3 +178,6 @@ autotest_result_*_junit.xml
 # local dev notes, not for commit
 libraries/AP_SwarmMesh/dev_notes_*.md
 libraries/AP_SwarmMesh/tools/SITL_TESTING_NOTES.md
+formation_run
+formation_track.csv
+formation.html

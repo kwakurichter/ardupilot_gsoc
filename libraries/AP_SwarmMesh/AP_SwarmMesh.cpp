@@ -275,6 +275,44 @@ bool AP_SwarmMesh::get_peer_data(uint8_t peer_id, struct PeerState& state) const
     return true;
 }
 
+// find an existing peer entry by sysid without allocating. returns nullptr if absent.
+const AP_SwarmMesh::PeerState *AP_SwarmMesh::find_peer_by_sysid(uint8_t peer_sysid) const
+{
+    if (!device_ready()) {
+        return nullptr;
+    }
+    for (uint8_t i = 0; i < num_peers; i++) {
+        if (peer_state[i].sysid == peer_sysid) {
+            return &peer_state[i];
+        }
+    }
+    return nullptr;
+}
+
+// fill loc with peer's last global pos, returns false if the peer is unknown or its entry is stale.
+bool AP_SwarmMesh::get_peer_location(Location& loc, uint8_t peer_sysid) const
+{
+    const PeerState *ps = find_peer_by_sysid(peer_sysid);
+    if (ps == nullptr || !ps->freshness) {
+        return false;
+    }
+    // global_pos: [lat degE7, lon degE7, alt mm]; Location alt is in cm.
+    loc = Location(ps->global_pos.x, ps->global_pos.y, ps->global_pos.z / 10, Location::AltFrame::ABSOLUTE);
+    return true;
+}
+
+// fill vel_ned (m/s, NED) with peer's last vel, returns false if the peer is unknown or its entry is stale.
+bool AP_SwarmMesh::get_peer_velocity_NED(Vector3f& vel_ned, uint8_t peer_sysid) const
+{
+    const PeerState *ps = find_peer_by_sysid(peer_sysid);
+    if (ps == nullptr || !ps->freshness) {
+        return false;
+    }
+    // velocity stored as cm/s NED; convert to m/s.
+    vel_ned = Vector3f(ps->velocity[0], ps->velocity[1], ps->velocity[2]) * 0.01f;
+    return true;
+}
+
 // check if the device is ready
 bool AP_SwarmMesh::device_ready(void) const
 {
