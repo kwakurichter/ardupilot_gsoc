@@ -22,7 +22,7 @@
 #define AP_SWARMMESH_POSCONTROL_ENABLED AP_SWARMMESH_ENABLED
 #endif
 
-// peer_state[AP_SWARMMESH_MAX_PEERS], sizeof(PeerState) is ~136 bytes currently. Boards can override this directly in hwdef
+// peer_state[AP_SWARMMESH_MAX_PEERS], sizeof(PeerState) is ~168 bytes currently. Boards can override this directly in hwdef
 #ifndef AP_SWARMMESH_MAX_PEERS
 #if HAL_MEM_CLASS >= HAL_MEM_CLASS_1000
 #define AP_SWARMMESH_MAX_PEERS 255  // full sysid range (0 is reserved for broadcast): H7, SITL, Linux, QURT
@@ -41,6 +41,16 @@
 // (which fill their small peer table on a first come first serve basis otherwise).
 #ifndef AP_SWARMMESH_MAX_PEER_FILTERS
 #define AP_SWARMMESH_MAX_PEER_FILTERS 16
+#endif
+
+// Max RX bytes drained through the parser per update tick. Must exceed the max arrival rate (~N_peers x stream-rate x ~90B) divided by the update rate, 
+// or the transport's buffers overflow and the peer table starves. SITL gets a large budget to cope with 254 node swarms.
+#ifndef AP_SWARMMESH_RX_BUDGET_BYTES
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+#define AP_SWARMMESH_RX_BUDGET_BYTES 16384
+#else
+#define AP_SWARMMESH_RX_BUDGET_BYTES 1024
+#endif
 #endif
 
 // TX stream rates (Hz) for each hardware profile.

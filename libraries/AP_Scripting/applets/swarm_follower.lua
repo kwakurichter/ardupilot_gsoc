@@ -45,28 +45,59 @@ local formation_alt_m = param:get('SCR_USER4') or 15
 local expected_peers = math.floor(param:get('SCR_USER5') or 0)
 
 local announced_ready = false
+local last_dbg_ms = 0
 
--- returns true once we've heard from enough peers and have a fresh leader fix
-local function swarm_ready()
+-- Cache of the last position/velocity we got for the leader. At scale instead of skipping a tick whenever stale we keep flying the most recent known slot for up to LEADER_HOLD_MS.
+local LEADER_HOLD_MS = 4000
+local cached_leader = nil
+local cached_vel = nil
+local cached_leader_ms = 0
+
+-- ready once we have a recent leader position (and, if configured, enough peers)
+local function leader_available(now)
   if leader_sysid <= 0 then
     return false
   end
   if expected_peers > 0 and swarm:count() < expected_peers then
     return false
   end
-  -- wait until leader has fresh location
-  return swarm:get_peer_location(leader_sysid) ~= nil
+  return cached_leader ~= nil and (now - cached_leader_ms) <= LEADER_HOLD_MS
+end
+
+-- engage once we've climbed clear of takeoff, derived from our own altitude rather than an external flag. 
+-- (SCR_USER6 has to be delivered to every follower and is silently lost for some when hundreds of vehicles are engaged at once)
+local function has_climbed()
+  local rp = ahrs:get_relative_position_NED_home()
+  return rp ~= nil and (-rp:z()) >= formation_alt_m * 0.8
 end
 
 function update()
-  -- do nothing gate param is set
-  local engaged = (param:get('SCR_USER6') or 0) >= 1
+  local now = millis():toint()
+  local engaged = has_climbed()
+
+  -- refresh the leader cache whenever a live (fresh) fix is available
+  local live = swarm:get_peer_location(leader_sysid)
+  if live then
+    cached_leader = live
+    cached_vel = swarm:get_peer_velocity_NED(leader_sysid)   -- may be nil
+    cached_leader_ms = now
+  end
+
+  -- DEBUG: report state ~1 Hz so we can see why a follower isn't moving.
+  if now - last_dbg_ms > 1000 then
+    last_dbg_ms = now
+    gcs:send_text(7, string.format("SFDBG eng=%d cnt=%d lf=%d age=%d mode=%d armed=%d",
+      engaged and 1 or 0, swarm:count(), live and 1 or 0,
+      cached_leader and (now - cached_leader_ms) or -1,
+      vehicle:get_mode(), arming:is_armed() and 1 or 0))
+  end
+
   if not arming:is_armed() or not engaged then
     announced_ready = false
     return update, UPDATE_MS
   end
 
-  if not swarm_ready() then
+  if not leader_available(now) then
     return update, UPDATE_MS
   end
 
@@ -80,24 +111,22 @@ function update()
     return update, UPDATE_MS
   end
 
-  local leader_loc = swarm:get_peer_location(leader_sysid)
-  if leader_loc then
-    local target = leader_loc:copy()
-    target:offset(offset_north_m, offset_east_m)              -- shift horizontally in the NE plane
-    target:set_alt_m(formation_alt_m, ALT_FRAME_ABOVE_HOME)  -- hold a fixed formation altitude
+  -- fly the cached leader slot (tolerant of mesh jitter at scale)
+  local target = cached_leader:copy()
+  target:offset(offset_north_m, offset_east_m)              -- shift horizontally in the NE plane
+  target:set_alt_m(formation_alt_m, ALT_FRAME_ABOVE_HOME)  -- hold a fixed formation altitude
 
-    -- Velocity FF, command the slot position and the leader's velocity. Falls back to a position target if the EKF origin or the leader's velocity isn't available.
-    local neu = target:get_vector_from_origin_NEU_m()        -- slot position as NEU (m) from origin
-    local vel = swarm:get_peer_velocity_NED(leader_sysid)    -- leader velocity, NED m/s (nil if stale)
-    if neu and vel then
-      local pos_ned = Vector3f()
-      pos_ned:x(neu:x())        -- North
-      pos_ned:y(neu:y())        -- East
-      pos_ned:z(-neu:z())       -- Down = -Up
-      vehicle:set_target_posvel_NED(pos_ned, vel)
-    else
-      vehicle:set_target_location(target)
-    end
+  -- Velocity FF: command the slot position and the leader's velocity. Falls back to a
+  -- position target if the EKF origin or the leader's velocity isn't available.
+  local neu = target:get_vector_from_origin_NEU_m()          -- slot position as NEU (m) from origin
+  if neu and cached_vel then
+    local pos_ned = Vector3f()
+    pos_ned:x(neu:x())        -- North
+    pos_ned:y(neu:y())        -- East
+    pos_ned:z(-neu:z())       -- Down = -Up
+    vehicle:set_target_posvel_NED(pos_ned, cached_vel)
+  else
+    vehicle:set_target_location(target)
   end
 
   return update, UPDATE_MS

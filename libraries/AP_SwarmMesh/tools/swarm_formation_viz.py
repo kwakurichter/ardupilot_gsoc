@@ -60,6 +60,8 @@ def main():
     ap.add_argument("csv")
     ap.add_argument("-o", "--out", default="formation.html")
     ap.add_argument("--fps", type=int, default=20, help="animation frames per second (default 20)")
+    ap.add_argument("--from", dest="from_t", type=float, default=None, help="crop replay to start at this time (s)")
+    ap.add_argument("--to", dest="to_t", type=float, default=None, help="crop replay to end at this time (s)")
     args = ap.parse_args()
 
     rows, roles = load(args.csv)
@@ -69,9 +71,12 @@ def main():
     local = {sid: [(t, *latlon_to_en(la, lo, lat0, lon0)) for (t, la, lo, _a) in tr]
              for sid, tr in rows.items()}
 
+    t_min = min(tr[0][0] for tr in local.values())
     t_max = max(tr[-1][0] for tr in local.values())
+    lo = args.from_t if args.from_t is not None else t_min
+    hi = args.to_t if args.to_t is not None else t_max
     dt = 1.0 / args.fps
-    grid = [i * dt for i in range(int(t_max / dt) + 1)]
+    grid = [round(lo + i * dt, 3) for i in range(int((hi - lo) / dt) + 1)]
 
     sids = sorted(local.keys())
     tracks = {sid: resample(local[sid], grid) for sid in sids}
@@ -89,12 +94,29 @@ def main():
         bn = sum(r[1] for r in half) / len(half)
         errors[sid] = [round(math.hypot(r[0] - be, r[1] - bn), 3) for r in rel]
 
+    # For big swarms, per-follower error lines (and JSON) don't scale: replace them
+    # with a per-frame percentile envelope (p10 / median / p90) across all followers.
+    big = (len(sids) - 1) > 24
+    err_env = None
+    if big:
+        fs = [s for s in sids if s != leader]
+        p10, p50, p90 = [], [], []
+        for k in range(len(grid)):
+            vals = sorted(errors[s][k] for s in fs)
+            n = len(vals)
+            p10.append(round(vals[int(n * 0.10)], 2))
+            p50.append(round(vals[int(n * 0.50)], 2))
+            p90.append(round(vals[min(n - 1, int(n * 0.90))], 2))
+        err_env = {"p10": p10, "p50": p50, "p90": p90}
+
     data = {
         "grid": [round(t, 2) for t in grid],
         "leader": leader,
         "roles": roles,
         "tracks": {s: [[round(p[0], 2), round(p[1], 2)] for p in tr] for s, tr in tracks.items()},
-        "errors": errors,
+        "errors": {} if big else errors,
+        "err_env": err_env,
+        "big": big,
         "sids": sids,
     }
 
@@ -176,6 +198,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 </div>
 <script>
 const D = __DATA__;
+const BIG = D.big;   // large swarm: drop spokes/legend, use a percentile error band
 // leader = amber; followers on a cool sequence
 const FOLLOW = ["#38bdf8","#2dd4bf","#4ade80","#a78bfa","#f472b6","#22d3ee"];
 const followIdx = {};
@@ -197,7 +220,9 @@ const sx=e=>(e-minE)/(maxE-minE)*(W-2*M)+M;
 const sy=n=>H-M-((n-minN)/(maxN-minN)*(H-2*M));
 const mPerPx=(maxE-minE)/(W-2*M);
 
-let maxErr=0.1; for(const s in D.errors) for(const v of D.errors[s]) maxErr=Math.max(maxErr,v);
+let maxErr=0.1;
+if(BIG){ for(const v of D.err_env.p90) maxErr=Math.max(maxErr,v); }
+else { for(const s in D.errors) for(const v of D.errors[s]) maxErr=Math.max(maxErr,v); }
 maxErr=Math.max(0.5,Math.ceil(maxErr*5)/5);
 
 function drawMap(f){
@@ -211,20 +236,24 @@ function drawMap(f){
   const L=D.tracks[D.leader][f];const lx=sx(L[0]),ly=sy(L[1]);
   mx.strokeStyle="#22333f";
   for(const r of [10,20,30]){mx.beginPath();mx.arc(lx,ly,r/mPerPx,0,7);mx.stroke();}
-  // formation spokes leader -> followers
-  mx.strokeStyle="rgba(255,181,71,0.22)";mx.lineWidth=1;
-  for(const s of D.sids){ if(s===D.leader)continue; const p=D.tracks[s][f];
-    mx.beginPath();mx.moveTo(lx,ly);mx.lineTo(sx(p[0]),sy(p[1]));mx.stroke();}
+  // formation spokes leader -> followers (only legible for small swarms)
+  if(!BIG){
+    mx.strokeStyle="rgba(255,181,71,0.22)";mx.lineWidth=1;
+    for(const s of D.sids){ if(s===D.leader)continue; const p=D.tracks[s][f];
+      mx.beginPath();mx.moveTo(lx,ly);mx.lineTo(sx(p[0]),sy(p[1]));mx.stroke();}
+  }
   // trails + markers
+  const trailWin=BIG?28:90, fr=BIG?2.6:5;
   for(const s of D.sids){
     const tr=D.tracks[s],c=colorFor(s),lead=s===D.leader;
-    const start=Math.max(0,f-90);
-    mx.lineWidth=lead?2.4:1.6;mx.strokeStyle=c;mx.globalAlpha=lead?0.9:0.75;
+    const start=Math.max(0,f-trailWin);
+    mx.lineWidth=lead?2.4:(BIG?0.9:1.6);mx.strokeStyle=c;mx.globalAlpha=lead?0.9:(BIG?0.5:0.75);
     mx.beginPath();for(let k=start;k<=f;k++){const p=tr[k];k===start?mx.moveTo(sx(p[0]),sy(p[1])):mx.lineTo(sx(p[0]),sy(p[1]));}
     mx.stroke();mx.globalAlpha=1;
     const p=tr[f],X=sx(p[0]),Y=sy(p[1]);
-    mx.beginPath();mx.arc(X,Y,lead?7:5,0,7);mx.fillStyle=c;
-    mx.shadowColor=c;mx.shadowBlur=lead?12:8;mx.fill();mx.shadowBlur=0;
+    mx.beginPath();mx.arc(X,Y,lead?7:fr,0,7);mx.fillStyle=c;
+    if(!BIG||lead){mx.shadowColor=c;mx.shadowBlur=lead?12:8;}
+    mx.fill();mx.shadowBlur=0;
     if(lead){mx.lineWidth=1.5;mx.strokeStyle="rgba(0,0,0,.55)";mx.stroke();}
   }
   // scale bar
@@ -241,12 +270,26 @@ function drawErr(f){
     ex.fillText(v.toFixed(1),8,y+3);}
   ex.strokeStyle="#22333f";ex.beginPath();ex.moveTo(x0,y0);ex.lineTo(x0,y1);ex.stroke();
   const N=D.grid.length,px=k=>x0+(x1-x0)*k/(N-1),py=v=>y0-(y0-y1)*Math.min(v,maxErr)/maxErr;
-  for(const s of D.sids){ if(s===D.leader)continue;
-    const c=colorFor(s),e=D.errors[s];
-    ex.strokeStyle=c;ex.lineWidth=1.6;ex.globalAlpha=.9;ex.beginPath();
-    for(let k=0;k<=f;k++){k===0?ex.moveTo(px(k),py(e[k])):ex.lineTo(px(k),py(e[k]));}
-    ex.stroke();ex.globalAlpha=1;
-    const y=py(e[f]);ex.beginPath();ex.arc(px(f),y,3,0,7);ex.fillStyle=c;ex.fill();
+  if(BIG){
+    // p10-p90 band + median line across all followers
+    const E=D.err_env;
+    ex.fillStyle="rgba(56,189,248,0.18)";ex.beginPath();
+    for(let k=0;k<=f;k++){k===0?ex.moveTo(px(k),py(E.p10[k])):ex.lineTo(px(k),py(E.p10[k]));}
+    for(let k=f;k>=0;k--){ex.lineTo(px(k),py(E.p90[k]));}
+    ex.closePath();ex.fill();
+    ex.strokeStyle="#38bdf8";ex.lineWidth=2;ex.beginPath();
+    for(let k=0;k<=f;k++){k===0?ex.moveTo(px(k),py(E.p50[k])):ex.lineTo(px(k),py(E.p50[k]));}
+    ex.stroke();
+    const y=py(E.p50[f]);ex.beginPath();ex.arc(px(f),y,3,0,7);ex.fillStyle="#38bdf8";ex.fill();
+    ex.fillStyle="#6b7d8a";ex.fillText("median + p10–p90 band, "+(D.sids.length-1)+" followers",x0+6,y1+4);
+  } else {
+    for(const s of D.sids){ if(s===D.leader)continue;
+      const c=colorFor(s),e=D.errors[s];
+      ex.strokeStyle=c;ex.lineWidth=1.6;ex.globalAlpha=.9;ex.beginPath();
+      for(let k=0;k<=f;k++){k===0?ex.moveTo(px(k),py(e[k])):ex.lineTo(px(k),py(e[k]));}
+      ex.stroke();ex.globalAlpha=1;
+      const y=py(e[f]);ex.beginPath();ex.arc(px(f),y,3,0,7);ex.fillStyle=c;ex.fill();
+    }
   }
   ex.strokeStyle="#43535e";ex.setLineDash([3,4]);ex.beginPath();ex.moveTo(px(f),y1);ex.lineTo(px(f),y0);ex.stroke();ex.setLineDash([]);
   ex.fillStyle="#6b7d8a";ex.fillText("m",8,y1-2);ex.fillText("T+"+D.grid[f].toFixed(0)+"s",x1-52,y0+20);
@@ -254,9 +297,16 @@ function drawErr(f){
 
 // legend + hud
 const leg=document.getElementById('legend');
-for(const s of D.sids){const c=colorFor(s);const el=document.createElement('span');
-  el.innerHTML=`<span class="dot" style="background:${c};color:${c}"></span>`+
-    (s===D.leader?`<b>leader</b> ${s}`:`follower ${s}`);leg.appendChild(el);}
+if(BIG){
+  const el=document.createElement('span');
+  el.innerHTML=`<span class="dot" style="background:#ffb547;color:#ffb547"></span><b>leader</b>`+
+    `&nbsp;&nbsp;<span class="dot" style="background:#38bdf8;color:#38bdf8"></span>${D.sids.length-1} followers`;
+  leg.appendChild(el);
+} else {
+  for(const s of D.sids){const c=colorFor(s);const el=document.createElement('span');
+    el.innerHTML=`<span class="dot" style="background:${c};color:${c}"></span>`+
+      (s===D.leader?`<b>leader</b> ${s}`:`follower ${s}`);leg.appendChild(el);}
+}
 document.getElementById('hud').innerHTML =
   `<b>${D.sids.length}</b> vehicles &nbsp;·&nbsp; <b>${(D.sids.length-1)}</b> followers &nbsp;·&nbsp; <b>${D.grid[D.grid.length-1].toFixed(0)}s</b> replay`;
 

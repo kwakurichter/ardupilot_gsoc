@@ -289,11 +289,12 @@ const AP_SwarmMesh::PeerState *AP_SwarmMesh::find_peer_by_sysid(uint8_t peer_sys
     return nullptr;
 }
 
-// fill loc with peer's last global pos, returns false if the peer is unknown or its entry is stale.
+// fill loc with peer's last global pos. Returns false if the peer is unknown or its POSITION value is stale
 bool AP_SwarmMesh::get_peer_location(Location& loc, uint8_t peer_sysid) const
 {
     const PeerState *ps = find_peer_by_sysid(peer_sysid);
-    if (ps == nullptr || !ps->freshness) {
+    const uint32_t pos_bit = 1U << (uint8_t)MsgFresh::GLOBAL_POSITION_INT;
+    if (ps == nullptr || !(ps->freshness & pos_bit)) {
         return false;
     }
     // global_pos: [lat degE7, lon degE7, alt mm]; Location alt is in cm.
@@ -301,11 +302,12 @@ bool AP_SwarmMesh::get_peer_location(Location& loc, uint8_t peer_sysid) const
     return true;
 }
 
-// fill vel_ned (m/s, NED) with peer's last vel, returns false if the peer is unknown or its entry is stale.
+// fill vel_ned (m/s, NED) with peer's last vel. Velocity is carried by either GLOBAL_POSITION_INT or LOCAL_POSITION_NED, so it is fresh if either bit is set.
 bool AP_SwarmMesh::get_peer_velocity_NED(Vector3f& vel_ned, uint8_t peer_sysid) const
 {
     const PeerState *ps = find_peer_by_sysid(peer_sysid);
-    if (ps == nullptr || !ps->freshness) {
+    const uint32_t vel_bits = (1U << (uint8_t)MsgFresh::GLOBAL_POSITION_INT) | (1U << (uint8_t)MsgFresh::LOCAL_POSITION_NED);
+    if (ps == nullptr || !(ps->freshness & vel_bits)) {
         return false;
     }
     // velocity stored as cm/s NED; convert to m/s.
@@ -382,10 +384,11 @@ void AP_SwarmMesh::save_peer_snapshot()
         return;
     }
 
-    // count eligible (filled + fresh) peers first, since the header needs the count up front and we don't want to buffer all peers on the stack
+    // count eligible (filled + alive) peers first, since the header needs the count up front and we don't want to buffer all peers on the stack.
+    // alive == any message type still fresh (freshness bitmask non-zero).
     uint16_t eligible = 0;
     for (uint8_t i = 0; i < num_peers; i++) {
-        if (peer_state[i].freshness) {
+        if (peer_state[i].freshness != 0) {
             eligible++;
         }
     }
@@ -407,7 +410,7 @@ void AP_SwarmMesh::save_peer_snapshot()
 
     for (uint8_t i = 0; i < num_peers; i++) {
         const PeerState &ps = peer_state[i];
-        if (!ps.freshness) {
+        if (ps.freshness == 0) {
             continue;
         }
         const AP_SwarmMesh_PeerSnapshot_t rec{
@@ -471,8 +474,7 @@ void AP_SwarmMesh::load_peer_snapshot()
             continue;
         }
 
-        // freshness, last_heard, last_seq, seq_seen_mask, rssi, rx_count, drop_count, prev_id, *_covariance and health_flags are deliberately left at zero. 
-        // freshness must stay false until a real packet confirms this peer again.
+        // freshness, last_heard_ms, last_seq, seq_seen_mask, rssi, rx_count, drop_count, prev_id, variances and health_flags are deliberately left at zero.
         ps->vehicle_type    = rec.vehicle_type;
         ps->mode            = rec.mode;
         ps->armed_state     = (rec.armed_state != 0);
@@ -503,8 +505,8 @@ void AP_SwarmMesh::prune_peer_table()
 {
     uint8_t write = 0;
     for (uint8_t read = 0; read < num_peers; read++) {
-        if (!peer_state[read].freshness) {
-            continue;  // drop this entry
+        if (peer_state[read].freshness == 0) {
+            continue;  // no fresh message types left -> peer is dead, drop it
         }
         if (write != read) {
             peer_state[write] = peer_state[read];

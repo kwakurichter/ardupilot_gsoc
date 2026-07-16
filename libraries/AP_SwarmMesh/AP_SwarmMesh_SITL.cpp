@@ -18,16 +18,29 @@
 #if AP_SWARMMESH_SITL_ENABLED
 
 #include <AP_HAL/AP_HAL.h>
+#include <sys/socket.h>
 
 // multicast group shared by all SITL swarm instances
 #define SWARMMESH_MCAST_ADDRESS "239.65.83.0"
 #define SWARMMESH_MCAST_PORT    57733U
+
+// Large kernel receive buffer for the multicast socket. With the full sysid range (254 nodes) every instance receives ~N x stream-rate packets/s.
+// The default ~256KB SO_RCVBUF overflows between drains and the kernel silently discards ~half the traffic (peer tables converge to only ~half the swarm). 
+// A few MB absorbs the scheduling jitter. Bounded by kern.ipc.maxsockbuf.
+#define SWARMMESH_SITL_RCVBUF (4 * 1024 * 1024)
 
 AP_SwarmMesh_SITL::AP_SwarmMesh_SITL(AP_SwarmMesh &frontend) :
     AP_SwarmMesh_Backend(frontend),
     _sock(true)
 {
     _sock_ok = _sock.connect(SWARMMESH_MCAST_ADDRESS, SWARMMESH_MCAST_PORT);
+    if (_sock_ok) {
+        const int fd = _sock.get_read_fd();
+        if (fd >= 0) {
+            int rcvbuf = SWARMMESH_SITL_RCVBUF;
+            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
+        }
+    }
 }
 
 bool AP_SwarmMesh_SITL::transport_ready() const 

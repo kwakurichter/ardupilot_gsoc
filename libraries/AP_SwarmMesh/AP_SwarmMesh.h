@@ -47,6 +47,22 @@ public:
 #endif
     };
 
+    // Bit positions in PeerState.freshness, one per tracked message type. Mirrors AP_SwarmMesh_Backend::LogMsg
+    // TODO: single assignment governs both dataflash logging and type freshness.
+    enum class MsgFresh : uint8_t {
+        HEARTBEAT                  = 0,
+        SYS_STATUS                 = 1,
+        GLOBAL_POSITION_INT        = 2,
+        LOCAL_POSITION_NED         = 3,
+        POSITION_TARGET_GLOBAL_INT = 4,
+        EXTENDED_SYS_STATE         = 5,
+        ATTITUDE                   = 6,
+        EKF_STATUS_REPORT          = 7,
+        SCALED_IMU                 = 8,
+        NUM_TYPES                  // keep last
+    };
+    static constexpr uint8_t NUM_FRESH_TYPES = (uint8_t)MsgFresh::NUM_TYPES;
+
     // The AP_SwarmMesh structure is filled in by the backend driver
     struct PeerState {
         // Peer identity
@@ -54,13 +70,13 @@ public:
         uint8_t  vehicle_type;  // 0: copter, 1: plane, 2: sub, 3: blimp, 4: rover
         uint8_t  prev_id;       // ID of peer which forwarded message
         // Liveness / Link quality
-        uint64_t last_heard;    // system time of last update from this peer for staleness detection (unix)
         uint16_t last_seq;      // for dedup ring buffer
         uint32_t seq_seen_mask; // bitmask of the 32 seq numbers behind last_seq
         uint8_t  rssi;          // signal strength
         uint16_t rx_count;      // received message count
         uint16_t drop_count;    // dropped message count
-        bool     freshness;     // true: FRESH, false: STALE
+        uint32_t last_heard_ms[NUM_FRESH_TYPES];    // type freshness. last_heard_ms[t] is the local time of the last received message of type t; freshness has bit t set while that is within the type's budget.
+        uint32_t freshness;     // bitmask of fresh message types (bit = MsgFresh). freshness == 0 means the peer is dead/stale.
         // Kinematic state
         Vector3f local_pos_NED; // offset from origin [x, y, z] in meters
         Vector3l global_pos;    // GPS [lat (degE7), lon (degE7), alt (mm)]

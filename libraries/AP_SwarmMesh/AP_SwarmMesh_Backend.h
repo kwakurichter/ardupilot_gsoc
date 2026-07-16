@@ -134,6 +134,13 @@ private:
     void handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps);
     bool log_rate_ok();
 
+    // type freshness: map a MAVLink msgid to a MsgFresh bit (-1 if untracked), and stamp that type's last_heard time + set its freshness bit.
+    static int8_t fresh_bit_for_msgid(uint32_t msgid);
+    void mark_fresh(AP_SwarmMesh::PeerState &ps, uint32_t msgid);
+
+    // true only if we have GPS UTC. Used to gate the deadline/staleness check.
+    bool have_synced_utc(uint64_t &usec) const;
+
     // TX path
     void send_mavlink(uint8_t dest_id, const mavlink_message_t *msg, uint16_t deadline_ms, uint8_t ttl);
     void forward_mavlink(uint8_t id, uint8_t dest_id, const uint8_t *payload, uint16_t deadline_ms, uint8_t ttl, uint8_t payload_len, uint8_t flags, uint64_t origin_time, uint16_t seq);

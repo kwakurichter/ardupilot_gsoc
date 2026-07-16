@@ -178,6 +178,15 @@ autotest_result_*_junit.xml
 # local dev notes, not for commit
 libraries/AP_SwarmMesh/dev_notes_*.md
 libraries/AP_SwarmMesh/tools/SITL_TESTING_NOTES.md
+libraries/AP_SwarmMesh/tools/SCALING.md
+libraries/AP_SwarmMesh/tools/swarm_formation_video.js
+libraries/AP_SwarmMesh/GSoC_post.md
+libraries/AP_SwarmMesh/formation-40-followers.html
+libraries/AP_SwarmMesh/formation-253-followers.html
+libraries/AP_SwarmMesh/swarmmesh-40-followers.mp4
+libraries/AP_SwarmMesh/swarmmesh-40-followers.webm
+libraries/AP_SwarmMesh/swarmmesh-253-followers.mp4
+libraries/AP_SwarmMesh/swarmmesh-253-followers.webm
 formation_run
 formation_track.csv
 formation.html

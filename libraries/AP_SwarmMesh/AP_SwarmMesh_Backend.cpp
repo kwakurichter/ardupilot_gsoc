@@ -36,6 +36,20 @@
 
 extern const AP_HAL::HAL& hal;
 
+// freshness budgets (ms), indexed by AP_SwarmMesh::MsgFresh. Each is ~3x the stream period. Order MUST match the MsgFresh enum
+static constexpr uint32_t FRESH_BUDGET_MS[] = {
+    3000,  // HEARTBEAT                  (~1 Hz)
+    3000,  // SYS_STATUS
+    2000,  // GLOBAL_POSITION_INT
+    2000,  // LOCAL_POSITION_NED
+    3000,  // POSITION_TARGET_GLOBAL_INT
+    5000,  // EXTENDED_SYS_STATE
+    2000,  // ATTITUDE
+    5000,  // EKF_STATUS_REPORT
+    2000,  // SCALED_IMU
+};
+static_assert(sizeof(FRESH_BUDGET_MS) / sizeof(FRESH_BUDGET_MS[0]) == AP_SwarmMesh::NUM_FRESH_TYPES, "FRESH_BUDGET_MS must have one entry per MsgFresh bit");
+
 AP_SwarmMesh_Backend::AP_SwarmMesh_Backend(AP_SwarmMesh &frontend) :
     _frontend(frontend)
 {
@@ -120,8 +134,8 @@ void AP_SwarmMesh_Backend::update()
         return;
     }
 
-    // drain available RX bytes through the parser
-    uint32_t nbytes = MIN(transport_available(), 1024U);
+    // drain available RX bytes through the parser. The budget caps max CPU per scheduler slot
+    uint32_t nbytes = MIN(transport_available(), (uint32_t)AP_SWARMMESH_RX_BUDGET_BYTES);
     while (nbytes-- > 0) {
         const int16_t b = transport_read();
         if (b >= 0 && parse_byte((uint8_t)b)) {
@@ -129,19 +143,22 @@ void AP_SwarmMesh_Backend::update()
         }
     }
 
-    // get freshness for every known peer on every tick
-    static constexpr uint64_t FRESHNESS_BUDGET_US = 1000ULL * 1000U; // 1s
-    const uint64_t now_us = AP_HAL::micros64();
+    // type freshness on every tick
+    const uint32_t now_ms = AP_HAL::millis();
     for (uint8_t i = 0; i < frontend_peer_count(); i++) {
         AP_SwarmMesh::PeerState *ps = frontend_peer_at(i);
         if (ps == nullptr) {
             continue;
         }
-        ps->freshness = (now_us - ps->last_heard) <= FRESHNESS_BUDGET_US;
+        for (uint8_t b = 0; b < AP_SwarmMesh::NUM_FRESH_TYPES; b++) {
+            const uint32_t bit = 1U << b;
+            if ((ps->freshness & bit) && (now_ms - ps->last_heard_ms[b]) > FRESH_BUDGET_MS[b]) {
+                ps->freshness &= ~bit;
+            }
+        }
     }
 
     // TX send path
-    const uint32_t now_ms = AP_HAL::millis();
 
     static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000U;
     if (now_ms - _last_heartbeat_ms >= HEARTBEAT_INTERVAL_MS) {
@@ -276,17 +293,16 @@ void AP_SwarmMesh_Backend::process_packet()
         }
     }
 
-    if (!(hdr->flags & SWARMMESH_NO_RTC)) {
-        uint64_t utc_usec = 0;
-#if AP_RTC_ENABLED
-        AP::rtc().get_utc_usec(utc_usec);
+    // Staleness check. deadline_ms == 0 means "no freshness budget" (skip). Otherwise only check when the sender was GPS-synced 
+    // Note: every SITL instance runs its own sim clock, so this check can't be validated in sim.
+    uint64_t rx_utc = 0;
+    if (!(hdr->flags & SWARMMESH_NO_RTC) && hdr->deadline_ms != 0 && have_synced_utc(rx_utc)) {
         const uint64_t deadline_us = (uint64_t)hdr->deadline_ms * 1000ULL;
-        if (utc_usec > hdr->origin_time_us && (utc_usec - hdr->origin_time_us) > deadline_us) {
+        if (rx_utc > hdr->origin_time_us && (rx_utc - hdr->origin_time_us) > deadline_us) {
             _stale++;
             ps->drop_count++;
             return;
         }
-#endif
     }
 
     if (hdr->ttl == 0) {
@@ -306,7 +322,6 @@ void AP_SwarmMesh_Backend::process_packet()
     }
 
     if (hdr->type == SWARMMESH_TYPE_MAVLINK) {
-        ps->last_heard = AP_HAL::micros64();
         ps->prev_id = hdr->prev_id;
         ps->rx_count++;
         mavlink_message_t msg;
@@ -337,8 +352,50 @@ bool AP_SwarmMesh_Backend::log_rate_ok()
     return true;
 }
 
+// map a MAVLink msgid to its MsgFresh bit position, or -1 if we don't track it.
+int8_t AP_SwarmMesh_Backend::fresh_bit_for_msgid(uint32_t msgid)
+{
+    switch (msgid) {
+    case MAVLINK_MSG_ID_HEARTBEAT:                  return (int8_t)AP_SwarmMesh::MsgFresh::HEARTBEAT;
+    case MAVLINK_MSG_ID_SYS_STATUS:                 return (int8_t)AP_SwarmMesh::MsgFresh::SYS_STATUS;
+    case MAVLINK_MSG_ID_GLOBAL_POSITION_INT:        return (int8_t)AP_SwarmMesh::MsgFresh::GLOBAL_POSITION_INT;
+    case MAVLINK_MSG_ID_LOCAL_POSITION_NED:         return (int8_t)AP_SwarmMesh::MsgFresh::LOCAL_POSITION_NED;
+    case MAVLINK_MSG_ID_POSITION_TARGET_GLOBAL_INT: return (int8_t)AP_SwarmMesh::MsgFresh::POSITION_TARGET_GLOBAL_INT;
+    case MAVLINK_MSG_ID_EXTENDED_SYS_STATE:         return (int8_t)AP_SwarmMesh::MsgFresh::EXTENDED_SYS_STATE;
+    case MAVLINK_MSG_ID_ATTITUDE:                   return (int8_t)AP_SwarmMesh::MsgFresh::ATTITUDE;
+    case MAVLINK_MSG_ID_EKF_STATUS_REPORT:          return (int8_t)AP_SwarmMesh::MsgFresh::EKF_STATUS_REPORT;
+    case MAVLINK_MSG_ID_SCALED_IMU:                 return (int8_t)AP_SwarmMesh::MsgFresh::SCALED_IMU;
+    default:                                        return -1;
+    }
+}
+
+// stamp the last_heard time for this message's type and set its freshness bit.
+void AP_SwarmMesh_Backend::mark_fresh(AP_SwarmMesh::PeerState &ps, uint32_t msgid)
+{
+    const int8_t bit = fresh_bit_for_msgid(msgid);
+    if (bit < 0) {
+        return;
+    }
+    ps.last_heard_ms[bit] = AP_HAL::millis();
+    ps.freshness |= (1U << (uint8_t)bit);
+}
+
+// GPS UTC is the only clock source synchronized across the mesh
+bool AP_SwarmMesh_Backend::have_synced_utc(uint64_t &usec) const
+{
+#if AP_RTC_ENABLED
+    return AP::rtc().get_utc_usec(usec) &&
+           AP::rtc().get_source_type() == AP_RTC::SOURCE_GPS;
+#else
+    (void)usec;
+    return false;
+#endif
+}
+
 void AP_SwarmMesh_Backend::handle_mavlink(const mavlink_message_t &msg, AP_SwarmMesh::PeerState &ps)
 {
+    mark_fresh(ps, msg.msgid);  // stamp per-type freshness before decoding
+
     switch (msg.msgid) {
 
     case MAVLINK_MSG_ID_HEARTBEAT: {
@@ -593,13 +650,14 @@ void AP_SwarmMesh_Backend::send_mavlink(uint8_t dest_id, const mavlink_message_t
     hdr.deadline_ms    = deadline_ms;
     hdr.payload_len    = payload_len;
 
+    // Stamp NORMAL (RTC-synced) only if we actually have GPS UTC right now
     uint64_t utc_usec = 0;
-#if AP_RTC_ENABLED
-    AP::rtc().get_utc_usec(utc_usec);
-    hdr.flags          = SWARMMESH_NORMAL;
-#else
-    hdr.flags          = SWARMMESH_NO_RTC;
-#endif
+    if (have_synced_utc(utc_usec)) {
+        hdr.flags = SWARMMESH_NORMAL;
+    } else {
+        hdr.flags = SWARMMESH_NO_RTC;
+        utc_usec = 0;
+    }
     hdr.origin_time_us = utc_usec;
 
     uint8_t crc = 0;
