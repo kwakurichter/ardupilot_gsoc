@@ -28,6 +28,9 @@
     border: 1px solid var(--border); background: var(--card);
     border-radius: 10px; padding: 1.1rem 1.25rem; margin-bottom: 1rem;
   }
+  h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--muted); margin: 1.75rem 0 .6rem; font-weight: 600; }
+  h3:first-of-type { margin-top: 0; }
   .card h2 { font-size: 1.1rem; margin: 0 0 .3rem; }
   .card p { margin: 0 0 .75rem; color: var(--muted); font-size: .94rem; }
   .stats { display: flex; flex-wrap: wrap; gap: .4rem 1.25rem; margin: 0 0 .9rem;
@@ -47,7 +50,9 @@
 <body>
 <main>
   <h1>AP_SwarmMesh &mdash; SITL experiment replays</h1>
-  <p class="sub">Decentralized glyph formation over an ad-hoc peer-to-peer mesh. GSoC 2026.</p>
+  <p class="sub">Decentralized swarm coordination over an ad-hoc peer-to-peer mesh. GSoC 2026.</p>
+
+  <h3>Glyph formation</h3>
 
   <div class="card">
     <h2>GSoC glyph formation</h2>
@@ -62,7 +67,6 @@
       <span><b>2.03 m</b> min separation</span>
     </div>
     <a class="btn" href="gsoc-swarm-replay.html">Open replay</a>
-    <a class="btn" href="gsoc-swarm-replay-standalone.html">Sandboxed variant</a>
   </div>
 
   <div class="card">
@@ -76,7 +80,34 @@
       <span><b>668 s</b> after task change</span>
     </div>
     <a class="btn" href="gsoc-to-cosg-replay.html">Open replay</a>
-    <a class="btn" href="gsoc-to-cosg-replay-standalone.html">Sandboxed variant</a>
+  </div>
+
+  <h3>Leader&ndash;follower formation</h3>
+
+  <div class="card">
+    <h2>40 followers</h2>
+    <p>Each follower reads the leader's position and velocity straight out of its own mesh peer
+       table and holds a fixed NED offset, with the leader's velocity fed forward. The leader flies
+       a box trajectory in <code>GUIDED</code>.</p>
+    <div class="stats">
+      <span><b>100%</b> airborne and tracking</span>
+      <span><b>0.36 m</b> median formation error</span>
+    </div>
+    <a class="btn" href="formation-40-followers.html">Open replay</a>
+  </div>
+
+  <div class="card">
+    <h2>253 followers &mdash; the full sysid range</h2>
+    <p>The same experiment at 254 ArduCopter SITL instances on one host, the largest the MAVLink
+       system-ID space allows. Followers stay silent so the leader's position stays fresh over the
+       mesh.</p>
+    <div class="stats">
+      <span><b>253/254</b> airborne</span>
+      <span><b>236/252</b> tracking (94%)</span>
+      <span><b>0.87 m</b> median formation error</span>
+      <span>p90 <b>5.3 m</b></span>
+    </div>
+    <a class="btn" href="formation-253-followers.html">Open replay</a>
   </div>
 
   <footer>
